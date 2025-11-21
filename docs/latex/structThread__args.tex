@@ -1,0 +1,87 @@
+\hypertarget{structThread__args}{\section{Thread\-\_\-args Struct Reference}
+\label{structThread__args}\index{Thread\-\_\-args@{Thread\-\_\-args}}
+}
+Inheritance diagram for Thread\-\_\-args\-:\begin{figure}[H]
+\begin{center}
+\leavevmode
+\includegraphics[height=1.333333cm]{structThread__args}
+\end{center}
+\end{figure}
+\subsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\hyperlink{structThread__args_a399b672e0f4f137fe52c141bd8c38eb1}{Thread\-\_\-args} ()
+\item 
+\hyperlink{structThread__args_a48650ff1135c661a730a5443ccd94f8b}{Thread\-\_\-args} (zmq\-::context\-\_\-t $\ast$contextin, std\-::string threadname, void($\ast$funcin)(std\-::string))
+\item 
+\hyperlink{structThread__args_af99da074784961f4953bae7e5ff67f33}{Thread\-\_\-args} (zmq\-::context\-\_\-t $\ast$contextin, std\-::string threadname, void($\ast$funcin)(\hyperlink{structThread__args}{Thread\-\_\-args} $\ast$))
+\item 
+virtual \hyperlink{structThread__args_ad786e0c55b4e44bc04d9ba3b813bace1}{$\sim$\-Thread\-\_\-args} ()
+\end{DoxyCompactItemize}
+\subsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+\hypertarget{structThread__args_a7f2bf0637bd8774d37ddfb6096bbe448}{zmq\-::context\-\_\-t $\ast$ \hyperlink{structThread__args_a7f2bf0637bd8774d37ddfb6096bbe448}{context}}\label{structThread__args_a7f2bf0637bd8774d37ddfb6096bbe448}
+
+\begin{DoxyCompactList}\small\item\em Z\-M\-Q context used for Z\-M\-Q socket creation. \end{DoxyCompactList}\item 
+\hypertarget{structThread__args_a594f831be7ce66015a7606e023b24cf4}{std\-::string \hyperlink{structThread__args_a594f831be7ce66015a7606e023b24cf4}{Thread\-Name}}\label{structThread__args_a594f831be7ce66015a7606e023b24cf4}
+
+\begin{DoxyCompactList}\small\item\em name of thread (deffined at creation) \end{DoxyCompactList}\item 
+\hypertarget{structThread__args_a2cf8fd4407da28da635b68f47be5f8f5}{void($\ast$ \hyperlink{structThread__args_a2cf8fd4407da28da635b68f47be5f8f5}{func\-\_\-with\-\_\-string} )(std\-::string)}\label{structThread__args_a2cf8fd4407da28da635b68f47be5f8f5}
+
+\begin{DoxyCompactList}\small\item\em function pointer to string thread \end{DoxyCompactList}\item 
+\hypertarget{structThread__args_a674c5df8bb54ea3f96befbef2dfb1a78}{void($\ast$ \hyperlink{structThread__args_a674c5df8bb54ea3f96befbef2dfb1a78}{func} )(\hyperlink{structThread__args}{Thread\-\_\-args} $\ast$)}\label{structThread__args_a674c5df8bb54ea3f96befbef2dfb1a78}
+
+\begin{DoxyCompactList}\small\item\em function pointer to thread with args \end{DoxyCompactList}\item 
+\hypertarget{structThread__args_a4f71beb11e75d05269fc63ca7c19a8a9}{pthread\-\_\-t \hyperlink{structThread__args_a4f71beb11e75d05269fc63ca7c19a8a9}{thread}}\label{structThread__args_a4f71beb11e75d05269fc63ca7c19a8a9}
+
+\begin{DoxyCompactList}\small\item\em Simple constructor underlying thread that interface is built ontop of. \end{DoxyCompactList}\item 
+\hypertarget{structThread__args_a54c977a687fb1a2a82b9e9e42a5ec0f7}{zmq\-::socket\-\_\-t $\ast$ \hyperlink{structThread__args_a54c977a687fb1a2a82b9e9e42a5ec0f7}{sock}}\label{structThread__args_a54c977a687fb1a2a82b9e9e42a5ec0f7}
+
+\begin{DoxyCompactList}\small\item\em Z\-M\-Q socket pointer is assigned in string thread,but can be sued otherwise. \end{DoxyCompactList}\item 
+\hypertarget{structThread__args_a9cb8f6b709c5687bf28531bf4d808c75}{bool \hyperlink{structThread__args_a9cb8f6b709c5687bf28531bf4d808c75}{running}}\label{structThread__args_a9cb8f6b709c5687bf28531bf4d808c75}
+
+\begin{DoxyCompactList}\small\item\em Bool flag to tell the thread to run (if not set thread goes into wait cycle. \end{DoxyCompactList}\item 
+\hypertarget{structThread__args_a298b8c85c8598ecc557e2090d90a73c3}{bool \hyperlink{structThread__args_a298b8c85c8598ecc557e2090d90a73c3}{kill}}\label{structThread__args_a298b8c85c8598ecc557e2090d90a73c3}
+
+\begin{DoxyCompactList}\small\item\em Bool flay used to kill the thread. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\subsection{Constructor \& Destructor Documentation}
+\hypertarget{structThread__args_a399b672e0f4f137fe52c141bd8c38eb1}{\index{Thread\-\_\-args@{Thread\-\_\-args}!Thread\-\_\-args@{Thread\-\_\-args}}
+\index{Thread\-\_\-args@{Thread\-\_\-args}!Thread_args@{Thread\-\_\-args}}
+\subsubsection[{Thread\-\_\-args}]{\setlength{\rightskip}{0pt plus 5cm}Thread\-\_\-args\-::\-Thread\-\_\-args (
+\begin{DoxyParamCaption}
+{}
+\end{DoxyParamCaption}
+)\hspace{0.3cm}{\ttfamily [inline]}}}\label{structThread__args_a399b672e0f4f137fe52c141bd8c38eb1}
+$<$ Simple constructor \hypertarget{structThread__args_a48650ff1135c661a730a5443ccd94f8b}{\index{Thread\-\_\-args@{Thread\-\_\-args}!Thread\-\_\-args@{Thread\-\_\-args}}
+\index{Thread\-\_\-args@{Thread\-\_\-args}!Thread_args@{Thread\-\_\-args}}
+\subsubsection[{Thread\-\_\-args}]{\setlength{\rightskip}{0pt plus 5cm}Thread\-\_\-args\-::\-Thread\-\_\-args (
+\begin{DoxyParamCaption}
+\item[{zmq\-::context\-\_\-t $\ast$}]{contextin, }
+\item[{std\-::string}]{threadname, }
+\item[{void($\ast$)(std\-::string)}]{funcin}
+\end{DoxyParamCaption}
+)\hspace{0.3cm}{\ttfamily [inline]}}}\label{structThread__args_a48650ff1135c661a730a5443ccd94f8b}
+$<$ Construtor for thread with string \hypertarget{structThread__args_af99da074784961f4953bae7e5ff67f33}{\index{Thread\-\_\-args@{Thread\-\_\-args}!Thread\-\_\-args@{Thread\-\_\-args}}
+\index{Thread\-\_\-args@{Thread\-\_\-args}!Thread_args@{Thread\-\_\-args}}
+\subsubsection[{Thread\-\_\-args}]{\setlength{\rightskip}{0pt plus 5cm}Thread\-\_\-args\-::\-Thread\-\_\-args (
+\begin{DoxyParamCaption}
+\item[{zmq\-::context\-\_\-t $\ast$}]{contextin, }
+\item[{std\-::string}]{threadname, }
+\item[{void($\ast$)({\bf Thread\-\_\-args} $\ast$)}]{funcin}
+\end{DoxyParamCaption}
+)\hspace{0.3cm}{\ttfamily [inline]}}}\label{structThread__args_af99da074784961f4953bae7e5ff67f33}
+$<$ Constrcutor for thread with args \hypertarget{structThread__args_ad786e0c55b4e44bc04d9ba3b813bace1}{\index{Thread\-\_\-args@{Thread\-\_\-args}!$\sim$\-Thread\-\_\-args@{$\sim$\-Thread\-\_\-args}}
+\index{$\sim$\-Thread\-\_\-args@{$\sim$\-Thread\-\_\-args}!Thread_args@{Thread\-\_\-args}}
+\subsubsection[{$\sim$\-Thread\-\_\-args}]{\setlength{\rightskip}{0pt plus 5cm}virtual Thread\-\_\-args\-::$\sim$\-Thread\-\_\-args (
+\begin{DoxyParamCaption}
+{}
+\end{DoxyParamCaption}
+)\hspace{0.3cm}{\ttfamily [inline]}, {\ttfamily [virtual]}}}\label{structThread__args_ad786e0c55b4e44bc04d9ba3b813bace1}
+$<$ virtual constructor 
+
+The documentation for this struct was generated from the following file\-:\begin{DoxyCompactItemize}
+\item 
+Data\-Model/Utilities.\-h\end{DoxyCompactItemize}
