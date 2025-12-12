@@ -1,0 +1,31 @@
+# backups
+*~
+\#*#
+# thumbnails
+.DS_Store
+# objects
+*.o
+# libraries
+*.so
+*.a
+# dependency files
+*.d
+# root dictionary pcm files
+*.pcm
+# root dictionary sourcefiles
+*Dict.cxx
+*Dict.h
+# python pre-compiled modules
+*.pyc
+# data files
+*.root
+
+# the dependencies symlink
+Dependencies
+# the main executable
+main
+# lib folder is just build products
+lib/*
+# the include folder is actually automatically populated
+include/*
+

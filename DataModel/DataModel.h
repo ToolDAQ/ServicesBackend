@@ -6,7 +6,6 @@
 #include <mutex>
 
 #include "DAQDataModelBase.h"
-#include "Utilities.h"
 #include "Pool.h"
 #include "JobQueue.h"
 
@@ -31,7 +30,7 @@ class DataModel : public DAQDataModelBase {
 	
 	private:
 	
-	Utilities utils; ///< for thread management
+	DAQUtilities utils; ///< for thread management
 	
 	// Tools can add connections to this and the SocketManager
 	// will periodically invoke UpdateConnections to connect clients
@@ -101,7 +100,6 @@ class DataModel : public DAQDataModelBase {
 	/*               PubReceiver                 */
 	/* ----------------------------------------- */
 	// TODO Tool monitoring struct?
-	std::atomic<int> pub_rcv_thread_crashes;
 	std::vector<QueryBatch*> write_msg_queue;
 	std::mutex write_msg_queue_mtx;
 	std::atomic<int> write_polls_failed;
@@ -109,22 +107,18 @@ class DataModel : public DAQDataModelBase {
 	std::atomic<int> write_rcv_fails;
 	std::atomic<int> write_bad_msgs;
 	std::atomic<int> write_buffer_transfers;
-
+	std::atomic<int> pub_rcv_thread_crashes;
 	//}
-	
-	// TODO move to struct
-	{
-	zmq::socket_t* pub_socket;
-	std::mutex pub_socket_mtx; // socket needed by Reader and SocketManager (for finding new clients)
-	}
 	
 	/* ----------------------------------------- */
 	/*                 ReadReply                 */
 	/* ----------------------------------------- */
 	// TODO Tool monitoring struct?
-	std::atomic<int> read_rcv_thread_crashes;
 	std::vector<QueryBatch*> read_msg_queue;
 	std::mutex read_msg_queue_mtx;
+	std::vector<QueryBatch*> query_replies;
+	std::mutex query_replies_mtx;
+	
 	std::atomic<int> readrep_polls_failed;
 	std::atomic<int> readrep_msgs_rcvd;
 	std::atomic<int> readrep_rcv_fails;
@@ -133,15 +127,8 @@ class DataModel : public DAQDataModelBase {
 	std::atomic<int> readrep_rep_send_fails;
 	std::atomic<int> readrep_in_buffer_transfers;
 	std::atomic<int> readrep_out_buffer_transfers;
+	std::atomic<int> read_rcv_thread_crashes;
 	
-	// TODO move to struct
-	{
-	zmq::socket_t* read_socket;
-	std::mutex read_socket_mtx; // socket needed by Reader and SocketManager (for finding new clients)
-	}
-	
-	std::vector<QueryBatch*> query_replies;
-	std::mutex query_replies_mtx;
 	
 	/* ----------------------------------------- */
 	/*              MulticastWorkers             */

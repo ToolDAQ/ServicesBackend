@@ -5,6 +5,7 @@
 #include <iostream>
 
 #include "Tool.h"
+#include "DataModel.h"
 
 /**
  * \class MyToolServiceAdd
@@ -13,7 +14,6 @@
 *
 * $Author: B.Richards $
 * $Date: 2019/05/28 10:44:00 $
-* Contact: b.richards@qmul.ac.uk
 */
 class MyToolServiceAdd: public Tool {
 
@@ -28,7 +28,7 @@ class MyToolServiceAdd: public Tool {
 
  private:
 
-  Utilities* m_util;  ///< Pointer to utilities class to help with threading
+  DAQUtilities* m_util;  ///< Pointer to utilities class to help with threading
   zmq::socket_t* sock;  ///< zmq socket pointer for socket to advertise
   int m_port;  ///< Port to advertise
 
