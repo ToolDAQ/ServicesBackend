@@ -1,0 +1,10 @@
+verbose 2
+port_name db_read
+rcv_hwm 10000
+conns_backlog 30000
+poll_timeout_ms 10
+snd_timeout_ms 10
+rcv_timeout_ms 10
+local_buffer_size 200
+transfer_period_ms 200
+
