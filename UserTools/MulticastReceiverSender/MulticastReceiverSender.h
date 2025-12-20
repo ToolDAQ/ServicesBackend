@@ -13,6 +13,7 @@
 
 #include "Tool.h"
 #include "DataModel.h"
+#include "MulticastReceiveMonitoring.h"
 
 /**
  * \class MulticastReceiverSender
@@ -27,7 +28,9 @@
 // class for things passed to multicast listener thread
 struct MulticastReceive_args : public Thread_args {
 	
+	std::string m_tool_name;
 	DataModel* m_data;
+	MulticastReceiveMonitoring* monitoring_vars;
 	socklen_t addrlen;
 	struct sockaddr_in addr;
 	int socket;
@@ -36,13 +39,14 @@ struct MulticastReceive_args : public Thread_args {
 	char message[655355]; // theoretical maximum UDP buffer size - size also hard-coded in thread
 	int get_ok;
 	size_t local_buffer_size;
-	std::vector<std::string> in_local_queue;
+	std::vector<std::string>* in_local_queue;
 	std::vector<std::string> out_local_queue;
+	size_t out_i=0;
 	
-	std::vector<std::string>* in_queue;
-	std::mutex in_queue_mtx;
-	std::deque<std::string>* out_queue;
-	std::mutex out_queue_mtx;
+	std::vector<std::vector<std::string>*>* in_queue;
+	std::mutex* in_queue_mtx;
+	std::vector<std::string>* out_queue;
+	std::mutex* out_queue_mtx;
 	
 	std::chrono::time_point<std::chrono::steady_clock> last_transfer;
 	std::chrono::milliseconds transfer_period_ms;
@@ -60,8 +64,12 @@ class MulticastReceiverSender: public Tool {
 	private:
 	static void Thread(Thread_args* args);
 	MulticastReceive_args thread_args;
+	MulticastReceiveMonitoring monitoring_vars;
 	
-	int get_ok;  /// FIXME check usage
+	std::string type_str;  // "logging" or "monitoring"
+	int socket_handle;
+	int get_ok;
+	std::atomic<int>* thread_crashes;
 	
 };
 

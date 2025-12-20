@@ -1,14 +1,14 @@
-#ifndef ReadReceiverReplySender_H
-#define ReadReceiverReplySender_H
+#ifndef ReadQueryReceiverReplySender_H
+#define ReadQueryReceiverReplySender_H
 
 #include <iostream>
 
 #include "Tool.h"
 #include "DataModel.h"
-
+#include "ReadReceiveMonitoring.h"
 
 /**
- * \class ReadReceiverReplySender
+ * \class ReadQueryReceiverReplySender
  *
  * This Tool gets read queries from a ZMQ ROUTER socket and send replies as well as write query acknowledgements.
  *
@@ -17,9 +17,11 @@
  * Contact: marcus.o-flaherty@warwick.ac.uk
 */
 
-struct ReadReceiverReplySender_args : public Thread_args {
+struct ReadQueryReceiverReplySender_args : public Thread_args {
 	
+	std::string m_tool_name;
 	DataModel* m_data;
+	ReadReceiveMonitoring* monitoring_vars;
 	zmq::socket_t* socket=nullptr;
 	std::mutex* socket_mtx; // for sharing the socket with ServicesManager Tool for finding clients
 	
@@ -41,17 +43,18 @@ struct ReadReceiverReplySender_args : public Thread_args {
 	
 };
 
-class ReadReceiverReplySender: public Tool {
+class ReadQueryReceiverReplySender: public Tool {
 	
 	public:
-	ReadReceiverReplySender(); ///< Simple constructor
+	ReadQueryReceiverReplySender(); ///< Simple constructor
 	bool Initialise(std::string configfile,DataModel &data); ///< Initialise Function for setting up Tool resorces. @param configfile The path and name of the dynamic configuration file to read in. @param data A reference to the transient data class used to pass information between Tools.
 	bool Execute(); ///< Executre function used to perform Tool perpose. 
 	bool Finalise(); ///< Finalise funciton used to clean up resorces.
 	
 	private:
 	static void Thread(Thread_args* args);
-	ReadReceiverReplySender_args thread_args;
+	ReadQueryReceiverReplySender_args thread_args;
+	ReadReceiveMonitoring monitoring_vars;
 	
 	std::string port_name; // name by which clients advertise sockets for sending read queries to the DB
 	

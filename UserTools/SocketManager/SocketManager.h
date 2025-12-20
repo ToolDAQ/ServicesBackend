@@ -5,6 +5,7 @@
 
 #include "Tool.h"
 #include "DataModel.h"
+#include "SocketManagerMonitoring.h"
 
 /**
 * \class SocketManager
@@ -19,9 +20,11 @@
 struct SocketManager_args : public Thread_args {
 	
 	DataModel* m_data;
+	SocketManagerMonitoring* monitoring_vars;
+	DAQUtilities* daq_utils;
 	std::map<std::string,std::string> clientsmap;
 	
-	std::map<std::string, std::chrono::time_point<std::chrono::steady_clock>> last_update;
+	std::chrono::time_point<std::chrono::steady_clock> last_update;
 	std::chrono::milliseconds update_period_ms;
 	
 };
@@ -35,8 +38,10 @@ class SocketManager: public Tool {
 	bool Finalise(); ///< Finalise function used to clean up resources.
 	
 	private:
+	DAQUtilities daq_utils{nullptr};
 	static void Thread(Thread_args* args);
 	SocketManager_args thread_args;
+	SocketManagerMonitoring monitoring_vars;
 	
 };
 

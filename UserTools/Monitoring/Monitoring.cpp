@@ -5,20 +5,26 @@ Monitoring::Monitoring():Tool(){}
 
 bool Monitoring::Initialise(std::string configfile, DataModel &data){
 	
-	if(configfile!="")  m_variables.Initialise(configfile);
+	InitialiseTool(data);
+	m_configfile = configfile;
+	InitialiseConfiguration(configfile);
 	//m_variables.Print();
-	
-	m_data= &data;
-	m_log= m_data->Log;
 	
 	if(!m_variables.Get("verbose",m_verbose)) m_verbose=1;
 	
 	// how often to write out monitoring stats
-	int monitoring_ms = 60000;
-	m_variables.Get("monitoring_period_ms",monitoring_ms);
+	int monitoring_period_ms = 60000;
+	m_variables.Get("monitoring_period_ms",monitoring_period_ms);
 	
-	thread_args.monitoring_period_ms = std::chrono::milliseconds{monitoring_ms};
-	thread_args.last_send = std::chrono<steady_clock>now();
+	ExportConfiguration();
+	
+	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
+	m_data->monitoring_variables.emplace(m_tool_name, &monitoring_vars);
+	
+	thread_args.monitoring_period_ms = std::chrono::milliseconds{monitoring_period_ms};
+	thread_args.last_send = std::chrono::steady_clock::now();
+	thread_args.m_data = m_data;
+	thread_args.monitoring_vars = &monitoring_vars;
 	m_data->utils.CreateThread("monitoring", &Thread, &thread_args); // thread needs a unique name
 	m_data->num_threads++;
 	
@@ -33,9 +39,9 @@ bool Monitoring::Execute(){
 	if(!thread_args.running){
 		Log(m_tool_name+" Execute found thread not running!",v_error);
 		Finalise();
-		Initialise(); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
+		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		// FIXME if restarts > X times in last Y mins, alarm (bypass, shove into DB? send to websocket?) and StopLoop.
-		++(m_data->monitoring_thread_crashes);
+		++(monitoring_vars.thread_crashes);
 	}
 	
 	return true;
@@ -44,15 +50,38 @@ bool Monitoring::Execute(){
 
 bool Monitoring::Finalise(){
 	
+	// signal job distributor thread to stop
+	Log(m_tool_name+": Joining monitoring thread",v_warning);
+	m_data->utils.KillThread(&thread_args);
+	m_data->num_threads--;
+	
+	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
+	m_data->monitoring_variables.erase(m_tool_name);
+	
+	Log(m_tool_name+": Finished",v_warning);
 	return true;
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool Monitoring::Thread(){
+void Monitoring::Thread(Thread_args* args){
 	
-	if((m_args->last_send - std::chrono<steady_clock>now()) > monitoring_period_ms){
+	Monitoring_args* m_args = dynamic_cast<Monitoring_args*>(args);
 	
+	if((m_args->last_send - std::chrono::steady_clock::now()) > m_args->monitoring_period_ms){
+		
+		std::unique_lock<std::mutex> locker(m_args->m_data->monitoring_variables_mtx);
+		
+		for(std::pair<const std::string, MonitoringVariables*>& mon : m_args->m_data->monitoring_variables){
+			
+			std::string s="{\"time\":0, \"device\":\"middleman\",\"subject\":\""+mon.first+"\", \"data\":"+mon.second->toJSON()+"}";
+			
+			std::unique_lock<std::mutex> locker(m_args->m_data->out_mon_msg_queue_mtx);
+			m_args->m_data->out_mon_msg_queue.push_back(s);
+			
+		}
+		
+		/*
 		// to calculate rates we need to know the difference in number
 		// of reads/writes since last time. So get the last values
 		unsigned long last_write_query_count;
@@ -144,18 +173,14 @@ bool Monitoring::Thread(){
 		       <<"]";
 		SC_vars["Status"]->SetValue(status.str());
 		
-		/*
-		// temporarily bypass the database logging level to ensure it gets sent to the monitoring db.
-		int db_verbosity_tmp = db_verbosity;
-		db_verbosity = 10;
-		Log(Concat("Monitoring Stats:",json_stats),15);
-		db_verbosity = db_verbosity_tmp;
-		*/
+//		// temporarily bypass the database logging level to ensure it gets sent to the monitoring db.
+//		int db_verbosity_tmp = db_verbosity;
+//		db_verbosity = 10;
+//		Log(Concat("Monitoring Stats:",json_stats),15);
+//		db_verbosity = db_verbosity_tmp;
 		
-		/*
-		std::string sql_qry = "INSERT INTO monitoring ( time, device, subject, data ) VALUES ( 'now()', '"
-			                + my_id+"','stats','"+json_stats+"' );";
-		*/
+		//std::string sql_qry = "INSERT INTO monitoring ( time, device, subject, data ) VALUES ( 'now()', '"
+		//	                + my_id+"','stats','"+json_stats+"' );";
 		
 		std::string multicast_msg = "{ \"topic\":\"monitoring\""
 			                        ", \"subject\":\"stats\""
@@ -172,20 +197,22 @@ bool Monitoring::Thread(){
 		}
 		
 		// reset counters
-		last_send = std::chrono<steady_clock>now();
+		last_send = std::chrono::steady_clocknow();
 		
 		min_loop_ms=9999999;
 		max_loop_ms=0;
 		loops=0;
 		
+		*/
 	}
 	
-	return true;
+	return;
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-bool ReceiveSQL::ResetStats(bool reset){
+bool Monitoring::ResetStats(bool reset){
+/*
 	if(!reset) return true;
 	
 	min_loop_ms=0;
@@ -236,6 +263,7 @@ bool ReceiveSQL::ResetStats(bool reset){
 	std::string timestring;
 	TimeStringFromUnixSec(0, timestring);
 	SC_vars["ResetStats"]->SetValue(false);
+*/
 	
 	return true;
 }

@@ -5,7 +5,7 @@
 
 #include "Tool.h"
 #include "DataModel.h"
-
+#include "MulticastWorkerMonitoring.h"
 
 /**
 * \class MulticastWorkers
@@ -20,19 +20,26 @@
 // class for things passed to multicast worker threads
 struct MulticastJobStruct {
 	
-	MulticastJobStruct(Pool<MulticastJobStruct>* pool, DataModel* data) : m_pool(pool) m_data(data){};
-	Pool<MulticastJobStruct>* m_pool;
+	MulticastJobStruct(Pool<MulticastJobStruct>* pool, DataModel* data, MulticastWorkerMonitoring* mon) : m_pool(pool), m_data(data), monitoring_vars(mon){};
 	DataModel* m_data;
+	MulticastWorkerMonitoring* monitoring_vars;
+	Pool<MulticastJobStruct>* m_pool;
+	std::string m_job_name;
 	std::vector<std::string>* msg_buffer;
-	std::string out_buffer;
+	std::string* out_buffer;
+	std::string logging_buffer;
+	std::string monitoring_buffer;
+	std::string rootplot_buffer;
+	std::string plotlyplot_buffer;
 	
 };
 
 struct MulticastJobDistributor_args : Thread_args {
 	
 	DataModel* m_data;
+	MulticastWorkerMonitoring* monitoring_vars;
 	std::vector<std::vector<std::string>*> local_msg_queue; // swap with datamodel and then pass out to jobs
-	Pool<MulticastJobStruct> job_struct_pool(true, 1000, 100); ///< pool for job objects used by worker threads
+	Pool<MulticastJobStruct> job_struct_pool{true, 1000, 100}; ///< pool for job objects used by worker threads
 	
 };
 
@@ -45,10 +52,11 @@ class MulticastWorkers: public Tool {
 	bool Finalise(); ///< Finalise funciton used to clean up resorces.
 	
 	private:
-	static bool Thread(Thread_args* args); ///< job distributor thread function that pulls batches of multicast messages from upstream and passes them to the job queue
+	static void Thread(Thread_args* args); ///< job distributor thread function that pulls batches of multicast messages from upstream and passes them to the job queue
 	MulticastJobDistributor_args thread_args; ///< args for the child thread that produces and distributes jobs to the worker farm
+	MulticastWorkerMonitoring monitoring_vars;
 	
-	static void MulticastMessageJob(void*& arg); ///< job function that prepares a batch of multicast messages for DB entry
+	static bool MulticastMessageJob(void*& arg); ///< job function that prepares a batch of multicast messages for DB entry
 	static void MulticastMessageFail(void*& arg); ///< job fail function, perform cleanup to return multicast buffer and job args struct to their respective Pools
 	
 	// for now use shared ones in datamodel

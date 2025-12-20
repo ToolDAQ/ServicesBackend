@@ -5,23 +5,29 @@ MulticastWorkers::MulticastWorkers():Tool(){}
 
 bool MulticastWorkers::Initialise(std::string configfile, DataModel &data){
 	
-	if(configfile!="")  m_variables.Initialise(configfile);
+	InitialiseTool(data);
+	m_configfile = configfile;
+	InitialiseConfiguration(configfile);
 	//m_variables.Print();
 	
-	m_data= &data;
-	m_log= m_data->Log;
-	
-	// allocate ehhh 60% of the CPU to multicast workers
-	int max_workers= (double(std::thread::hardware_concurrency())*0.6);
+//	// allocate ehhh 60% of the CPU to multicast workers
+//	int max_workers= (double(std::thread::hardware_concurrency())*0.6);
 	
 	if(!m_variables.Get("verbose",m_verbose)) m_verbose=1;
 //	m_variables.Get("max_workers",max_workers);
+	
+	ExportConfiguration();
 	
 	// potentially we will have a dedicated worker pool for multicast, but for now,
 	// just one created and managed by JobManager Tool
 	//job_manager = new WorkerPoolManager(multicast_jobs, &max_workers, 0, 0, 0, true, true);
 	
+	// monitoring struct to encapsulate tracking info
+	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
+	m_data->monitoring_variables.emplace(m_tool_name, &monitoring_vars);
+	
 	thread_args.m_data = m_data;
+	thread_args.monitoring_vars = &monitoring_vars;
 	m_data->utils.CreateThread("multicast_job_distributor", &Thread, &thread_args); // thread needs a unique name
 	m_data->num_threads++;
 	
@@ -35,8 +41,8 @@ bool MulticastWorkers::Execute(){
 	if(!thread_args.running){
 		Log(m_tool_name+" Execute found thread not running!",v_error);
 		Finalise();
-		Initialise(); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
-		++m_data->multicast_job_distributor_thread_crashes;
+		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
+		++(monitoring_vars.thread_crashes);
 	}
 	
 	return true;
@@ -47,19 +53,22 @@ bool MulticastWorkers::Finalise(){
 	// signal job distributor thread to stop
 	Log(m_tool_name+": Joining receiver thread",v_warning);
 	m_data->utils.KillThread(&thread_args);
-	Log(m_tool_name+": Finished",v_warning);
 	m_data->num_threads--;
 	
 	// this will invoke kill on the WorkerPoolManager thread creating worker threads, as well as all workers.
 	//delete job_manager;
 	
+	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
+	m_data->monitoring_variables.erase(m_tool_name);
+	
+	Log(m_tool_name+": Finished",v_warning);
 	return true;
 }
 
 
 void MulticastWorkers::Thread(Thread_args* args){
 	
-	MulticastJobDistributor_args* m_args = reinterpret_cast<MulticastJobDistributor_args*>(args);
+	MulticastJobDistributor_args* m_args = dynamic_cast<MulticastJobDistributor_args*>(args);
 	m_args->local_msg_queue.clear();
 	
 	// grab any batches of logging/monitoring messages
@@ -73,13 +82,14 @@ void MulticastWorkers::Thread(Thread_args* args){
 	for(int i=0; i<m_args->local_msg_queue.size(); ++i){
 		
 		// add a new Job to the job queue to process this data
-		Job* the_job = m_args->job_pool.GetNew(&m_args->m_data->job_pool, "multicast_worker");
+		Job* the_job = m_args->m_data->job_pool.GetNew("multicast_worker");
+		the_job->out_pool = &m_args->m_data->job_pool;
 		if(the_job->data == nullptr){
 			// on first creation of the job, make it a JobStruct to encapsulate its data
 			// N.B. Pool::GetNew will only invoke the constructor if this is a new instance,
 			// (not if it's been used before and then returned to the pool)
 			// so don't pass job-specific variables to the constructor
-			the_job->data = m_args->job_struct_pool.GetNew(&m_args->job_struct_pool, m_args->m_data);
+			the_job->data = m_args->job_struct_pool.GetNew(&m_args->job_struct_pool, m_args->m_data, m_args->monitoring_vars);
 		} else {
 			// this should never happen as jobs should return their args to the pool
 			std::cerr<<"Multicast Job with non-null data pointer!"<<std::endl;
@@ -88,18 +98,20 @@ void MulticastWorkers::Thread(Thread_args* args){
 			// or corruption (if the args got returned to the pool and given to another job)
 			// alternatively do we just over-write the job pointer with new args (potentially leaking it)
 		}
-		MulticastJobStruct* job_data = dynamic_cast<MulticastJobStruct*>(the_job->data);
+		MulticastJobStruct* job_data = static_cast<MulticastJobStruct*>(the_job->data);
 		job_data->msg_buffer = m_args->local_msg_queue[i];
+		job_data->monitoring_vars = m_args->monitoring_vars;
+		job_data->m_job_name = "multicast_worker";
 		
 		the_job->func = MulticastMessageJob;
 		the_job->fail_func = MulticastMessageFail;
 		
 		//multicast_jobs.AddJob(the_job);
-		m_data->job_queue.AddJob(the_job);
+		m_args->m_data->job_queue.AddJob(the_job);
 		
 	}
 	
-	return true;
+	return;
 }
 
 
@@ -109,18 +121,20 @@ void MulticastWorkers::MulticastMessageFail(void*& arg){
 	
 	// safety check in case the job somehow fails after returning its args to the pool
 	if(arg==nullptr){
+		std::cerr<<"multicast worker fail with no args"<<std::endl;
 		return; // FIXME log this occurrence?
 	}
 	
-	MulticastJobStruct* m_args=reinterpret_cast<MulticastJobStruct*>(arg);
-	++(*m_args->m_data->multicast_worker_job_fails);
+	MulticastJobStruct* m_args=static_cast<MulticastJobStruct*>(arg);
+	std::cerr<<m_args->m_job_name<<" failure"<<std::endl;
+	++(m_args->monitoring_vars->jobs_failed);
 	
 	// return the vector of string buffers to the pool for re-use by MulticastReceiverSender Tool
 	m_args->msg_buffer->clear();
 	m_args->m_data->multicast_buffer_pool.Add(m_args->msg_buffer);
 	
 	// return our job args to the pool
-	m_args->m_pool.Add(m_args);
+	m_args->m_pool->Add(m_args);
 	m_args = nullptr;  // clear the local m_args variable... not strictly necessary
 	arg = nullptr;     // clear the job 'data' member variable
 	
@@ -133,15 +147,16 @@ void MulticastWorkers::MulticastMessageFail(void*& arg){
 	// 2. submit the data we already have
 	// 3. make a new job for the remaining data
 	
+	return;
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 // Each job takes a vector of messages and converts them into a suitable object,
 // then locks and inserts that into a datamodel vector for the database workers
-void MulticastWorkers::MulticastMessageJob(void*& arg){
+bool MulticastWorkers::MulticastMessageJob(void*& arg){
 	
-	MulticastJobStruct* m_args=reinterpret_cast<MulticastJobStruct*>(arg);
+	MulticastJobStruct* m_args=static_cast<MulticastJobStruct*>(arg);
 	
 	// most efficient way to do insertion would seem to be via jsonb_to_recordset, which allows batching queries,
 	// query optimisation similar to 'unnest', and avoids the overhead of parsing the JSON: e.g.
@@ -177,64 +192,65 @@ void MulticastWorkers::MulticastMessageJob(void*& arg){
 		
 		switch(query_topic{next_msg[10]}){
 			case query_topic::logging:
-				m_args->out_buffer = m_args->logging_buffer;
+				m_args->out_buffer = &m_args->logging_buffer;
 				break;
 			case query_topic::monitoring:
-				m_args->out_buffer = m_args->monitoring_buffer;
+				m_args->out_buffer = &m_args->monitoring_buffer;
 				break;
 			case query_topic::rootplot:
-				m_args->out_buffer = m_args->rootplot_buffer;
+				m_args->out_buffer = &m_args->rootplot_buffer;
 				break;
 			case query_topic::plotlyplot:
-				m_args->out_buffer = m_args->plotlyplot_buffer;
+				m_args->out_buffer = &m_args->plotlyplot_buffer;
 				break;
 			default:
 				continue; // FIXME unknown topic: error log it.
 		}
 		
-		if(m_args->out_buffer.length()>1) m_args->out_buffer += ", ";
-		m_args->out_buffer += next_msg;
+		if(m_args->out_buffer->length()>1) (*m_args->out_buffer) += ", ";
+		(*m_args->out_buffer) += next_msg;
 		
-		++(*m_args->m_data->n_multicasts_processed); // FIXME add split by topic
+		++(m_args->monitoring_vars->msgs_processed);
 		
 	}
 	
 	// pass into datamodel for DatabaseWorkers
 	if(m_args->logging_buffer.length()!=1){
 		m_args->logging_buffer += "]";
-		std::unique_lock<std::mutex> locker(m_args->log_query_queue_mtx);
+		std::unique_lock<std::mutex> locker(m_args->m_data->log_query_queue_mtx);
 		m_args->m_data->log_query_queue.push_back(m_args->logging_buffer);
 	}
 	
 	if(m_args->monitoring_buffer.length()!=1){
 		m_args->monitoring_buffer += "]";
-		std::unique_lock<std::mutex> locker(m_args->mon_query_queue_mtx);
+		std::unique_lock<std::mutex> locker(m_args->m_data->mon_query_queue_mtx);
 		m_args->m_data->mon_query_queue.push_back(m_args->monitoring_buffer);
 	}
 	
 	if(m_args->rootplot_buffer.length()!=1){
 		m_args->rootplot_buffer += "]";
-		std::unique_lock<std::mutex> locker(m_args->rootplot_query_queue_mtx);
+		std::unique_lock<std::mutex> locker(m_args->m_data->rootplot_query_queue_mtx);
 		m_args->m_data->rootplot_query_queue.push_back(m_args->rootplot_buffer);
 	}
 	
 	if(m_args->plotlyplot_buffer.length()!=1){
 		m_args->plotlyplot_buffer += "]";
-		std::unique_lock<std::mutex> locker(m_args->plotlyplot_query_queue_mtx);
-		m_args->m_data->plotlyplot_query_queue_mtx.push_back(m_args->plotlyplot_buffer);
+		std::unique_lock<std::mutex> locker(m_args->m_data->plotlyplot_query_queue_mtx);
+		m_args->m_data->plotlyplot_query_queue.push_back(m_args->plotlyplot_buffer);
 	}
 	
 	// return the vector of string buffers to the pool for re-use by MulticastReceiverSender Tool
 	m_args->msg_buffer->clear();
 	m_args->m_data->multicast_buffer_pool.Add(m_args->msg_buffer);
 	
-	++(*m_args->m_data->multicast_worker_job_successes);
+	std::cerr<<m_args->m_job_name<<" completed"<<std::endl;
+	++(m_args->monitoring_vars->jobs_completed);
 	
-	m_args->m_pool.Add(m_args);  // return our job args to the job args struct pool
+	m_args->m_pool->Add(m_args);  // return our job args to the job args struct pool
 	m_args = nullptr;  // clear the local m_args variable... not strictly necessary
 	arg = nullptr;     // clear the job 'data' member variable
 	
-	return;
+	return true;
 	
 }
 
@@ -328,7 +344,7 @@ void MulticastWorkers::MulticastMessageJob(void* arg){
 	
 	//==================
 	
-	MulticastJobStruct* m_args=reinterpret_cast<MulticastJobStruct*>(arg);
+	MulticastJobStruct* m_args=static_cast<MulticastJobStruct*>(arg);
 	
 	// v0: pre-populate query with base
 	m_args->out_buffer = m_args->query_base;

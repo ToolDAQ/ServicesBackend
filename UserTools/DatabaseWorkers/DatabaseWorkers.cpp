@@ -1,25 +1,28 @@
 #include "DatabaseWorkers.h"
-#include "GenericFunctions.h"
+#include <memory>
+#include <pqxx/pqxx>
+//#include <pqxx/prepared_statement>
 
 DatabaseWorkers::DatabaseWorkers():Tool(){}
 
+std::string DatabaseWorkers::connection_string="";
 
 bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 	
-	if(configfile!="")  m_variables.Initialise(configfile);
+	InitialiseTool(data);
+	m_configfile = configfile;
+	InitialiseConfiguration(configfile);
 	//m_variables.Print();
 	
-	m_data= &data;
-	m_log= m_data->Log;
+	/* ----------------------------------------- */
+	/*               Configuration               */
+	/* ----------------------------------------- */
 	
-	if(!m_variables.Get("verbose",m_verbose)) m_verbose=1;
-	
-	// ##########################################################################
-	// default initialize variables
-	// ##########################################################################
+	m_verbose=1;
 	std::string dbhostname = "/tmp";     // '/tmp' = local unix socket
 	std::string dbhostaddr = "";         // fallback if hostname is empty, an ip address
 	int dbport = 5432;                   // database port
+	std::string dbname = "daq";          // database name
 	std::string dbuser = "";             // database user to connect as. defaults to PGUSER env var if empty.
 	std::string dbpasswd = "";           // database password. defaults to PGPASS or PGPASSFILE if not given.
 	
@@ -29,22 +32,43 @@ bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 	// with the pg_ident.conf file in postgres database. in such a case dbuser and dbpasswd
 	// should be left empty
 	
-	// ##########################################################################
-	// # Update with user-specified values.
-	// ##########################################################################
-	// TODO make these config var keys specific for each db.
+	m_variables.Get("verbose",m_verbose);
 	m_variables.Get("hostname",dbhostname);
 	m_variables.Get("hostaddr",dbhostaddr);
-	m_variables.Get("hostaddr",dbname);
+	m_variables.Get("dbname",dbname);
 	m_variables.Get("port",dbport);
 	m_variables.Get("user",dbuser);
 	m_variables.Get("passwd",dbpasswd);
+	// number of database workers - FIXME needs to match concurrency of postgres backend
+	max_workers = 10;
+	m_variables.Get("max_workers", max_workers);
 	
-	// ##########################################################################
-	// # Open connection
-	// ##########################################################################
+	ExportConfiguration();
+	
+	/* ----------------------------------------- */
+	/*               Thread Setup                */
+	/* ----------------------------------------- */
+	
+	// monitoring struct to encapsulate tracking info
+	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
+	m_data->monitoring_variables.emplace(m_tool_name, &monitoring_vars);
+	
+	// we *do* need a unique worker pool here because these workers
+	// maintain a connection to the database, so are a 'limited resource'
+	job_manager = new WorkerPoolManager(database_jobqueue, &max_workers, &(m_data->thread_cap), &(m_data->num_threads), nullptr, true);
+	
+	thread_args.m_data = m_data;
+	thread_args.monitoring_vars = &monitoring_vars;
+	thread_args.job_queue = &database_jobqueue;
+	m_data->utils.CreateThread("database_job_distributor", &Thread, &thread_args);
+	m_data->num_threads++;
+	
+	/* ----------------------------------------- */
+	/*                  DB Test                  */
+	/* ----------------------------------------- */
 	
 	// pass connection details to the postgres interface class
+	std::stringstream tmp;
 	if(dbhostname!="") tmp<<" host="<<dbhostname;
 	if(dbhostaddr!="") tmp<<" hostaddr="<<dbhostaddr;
 	if(dbname!="")     tmp<<" dbname="<<dbname;
@@ -54,7 +78,7 @@ bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 	connection_string = tmp.str();
 	// fail early: open a connection just to check we can
 	try {
-		pqxx::connection test_conn(tmp.str().c_str());
+		pqxx::connection test_conn(connection_string);
 		// verify we succeeded
 		// "don't use is_open(), use the broken_connection exception", they say. Hmm.
 		// But will that be thrown now, or only when we try to *use* the connection, for a transaction?
@@ -77,15 +101,6 @@ bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 		return false;
 	}
 	
-	// we *do* need a unique worker pool here because these workers
-	// maintain a connection to the database, so are a 'limited resource'
-	job_manager = new WorkerPoolManager(database_jobqueue, &max_workers, &(m_data->thread_cap), &(m_data->num_threads), nullptr, true);
-	
-	thread_args.m_data = m_data;
-	thread_args.job_queue = &database_jobqueue;
-	m_data->utils.CreateThread("database_job_distributor", &Thread, &thread_args);
-	m_data->num_threads++;
-	
 	return true;
 }
 
@@ -98,11 +113,11 @@ bool DatabaseWorkers::Execute(){
 	
 	// FIXME ok but actually this kills all our jobs, not just our job distributor
 	// so we don't want to do that.
-	if(!thread_args->running){
+	if(!thread_args.running){
 		Log(m_tool_name+" Execute found thread not running!",v_error);
 		Finalise();
-		Initialise(); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
-		++m_data->database_job_distributor_thread_crashes;
+		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
+		++(monitoring_vars.thread_crashes);
 	}
 	
 	return true;
@@ -122,6 +137,10 @@ bool DatabaseWorkers::Finalise(){
 	delete job_manager;
 	job_manager = nullptr;
 	m_data->num_threads--;
+	
+	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
+	m_data->monitoring_variables.erase(m_tool_name);
+	
 	Log(m_tool_name+": Finished",v_warning);
 	
 	return true;
@@ -129,35 +148,41 @@ bool DatabaseWorkers::Finalise(){
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-void DatabaseWorkers::Thread(Thread_args* arg){
+void DatabaseWorkers::Thread(Thread_args* args){
 	
-	m_args = dynamic_cast<DatabaseJobDistributor_args>(arg);
+	DatabaseJobDistributor_args* m_args = dynamic_cast<DatabaseJobDistributor_args*>(args);
 	
-	// add a new Job to the job queue to process this data
-	Job* the_job = m_data->job_pool.GetNew(&m_data->job_pool, "database_worker");
-	if(the_job->data == nullptr){
-		// on first creation of the job, make it a JobStruct to encapsulate its data
-		// N.B. Pool::GetNew will only invoke the constructor if this is a new instance,
-		// (not if it's been used before and then returned to the pool)
-		// so don't pass job-specific variables to the constructor
-		the_job->data = m_args->job_struct_pool.GetNew(&m_args->job_struct_pool, m_args->m_data);
-	} else {
-		// FIXME error
-		std::cerr<<"database_worker Job with non-null data pointer!"<<std::endl;
+	// get a new Job to the job queue to process this data
+	if(m_args->the_job==nullptr){
+		m_args->the_job = m_args->m_data->job_pool.GetNew("database_worker");
+		m_args->the_job->out_pool = &m_args->m_data->job_pool;
+		
+		if(m_args->the_job->data == nullptr){
+			// on first creation of the job, make it a JobStruct to encapsulate its data
+			// N.B. Pool::GetNew will only invoke the constructor if this is a new instance,
+			// (not if it's been used before and then returned to the pool)
+			// so don't pass job-specific variables to the constructor
+			m_args->the_job->data = m_args->job_struct_pool.GetNew(&m_args->job_struct_pool, m_args->m_data, m_args->monitoring_vars);
+		} else {
+			// FIXME error
+			std::cerr<<"database_worker Job with non-null data pointer!"<<std::endl;
+		}
+		
+		m_args->the_job->func = DatabaseJob;
+		m_args->the_job->fail_func = DatabaseJobFail;
+		
+		// FIXME this could leak the_job if the toolchain ends... gonna ignore that, i dunno how to handle it.
 	}
 	
-	the_job->func = DatabaseJob;
-	the_job->fail_func = DatabaseJobFail;
-	
-	DatabaseJobStruct* job_data = dynamic_cast<DatabaseJobStruct*>(the_job->data);
-	job_data->connection_string = connection_string;
+	DatabaseJobStruct* job_data = static_cast<DatabaseJobStruct*>(m_args->the_job->data);
+	job_data->clear();
 	
 	// XXX ok we have flexibility here on how much we want each worker to grab
 	// the more we do in one transaction (one job) the better throughput...
 	// but with possibly greater latency on replies
 	
 	// grab logging queries
-	locker = std::unique_lock<std::mutex>(m_args->m_data->log_query_queue_mtx);
+	std::unique_lock<std::mutex> locker(m_args->m_data->log_query_queue_mtx);
 	if(!m_args->m_data->log_query_queue.empty()){
 		std::swap(m_args->m_data->log_query_queue, job_data->logging_queue);
 	}
@@ -168,6 +193,17 @@ void DatabaseWorkers::Thread(Thread_args* arg){
 		std::swap(m_args->m_data->mon_query_queue, job_data->monitoring_queue);
 	}
 	
+	// if rootplot queries go over multicast, grab those
+	locker = std::unique_lock<std::mutex>(m_args->m_data->rootplot_query_queue_mtx);
+	if(!m_args->m_data->rootplot_query_queue.empty()){
+		std::swap(m_args->m_data->rootplot_query_queue, job_data->rootplot_queue);
+	}
+	
+	// if plotlyplot queries go over multicast, grab those
+	locker = std::unique_lock<std::mutex>(m_args->m_data->plotlyplot_query_queue_mtx);
+	if(!m_args->m_data->plotlyplot_query_queue.empty()){
+		std::swap(m_args->m_data->plotlyplot_query_queue, job_data->plotlyplot_queue);
+	
 	// grab write queries
 	locker = std::unique_lock<std::mutex>(m_args->m_data->write_query_queue_mtx);
 	if(!m_args->m_data->write_query_queue.empty()){
@@ -175,36 +211,38 @@ void DatabaseWorkers::Thread(Thread_args* arg){
 	}
 	
 	// grab read queries
-	std::unique_lock<std::mutex> locker(m_args->m_data->read_msg_queue_mtx);
+	locker = std::unique_lock<std::mutex>(m_args->m_data->read_msg_queue_mtx);
 	if(!m_args->m_data->read_msg_queue.empty()){
 		std::swap(m_args->m_data->read_msg_queue, job_data->read_queue);
 	}
-	
-	// if they go over multicast
-	// grab rootplot queries
-	locker = std::unique_lock<std::mutex>(m_args->m_data->rootplot_query_queue_mtx);
-	if(!m_args->m_data->rootplot_query_queue.empty()){
-		std::swap(m_args->m_data->rootplot_query_queue, job_data->rootplot_queue);
-	}
-	
-	// grab plotlyplot queries
-	locker = std::unique_lock<std::mutex>(m_args->m_data->plotlyplot_query_queue_mtx);
-	if(!m_args->m_data->plotlyplot_query_queue.empty()){
-		std::swap(m_args->m_data->plotlyplot_query_queue, job_data->plotlyplot_queue);
 	}
 	
 	locker.unlock();
 	
-	/*ok =*/ m_args->job_queue.AddJob(the_job); // just checks if you've defined func and first_vals = true;
+	// check if the job had something to do
+	if(job_data->logging_queue.empty() &&
+	   job_data->monitoring_queue.empty() &&
+	   job_data->rootplot_queue.empty() &&
+	   job_data->plotlyplot_queue.empty() &&
+	   job_data->write_queue.empty() &&
+	   job_data->read_queue.empty()) return;
+	
+	job_data->m_job_name = "database_worker";
+	
+	m_args->job_queue->AddJob(m_args->the_job);
+	m_args->the_job = nullptr;
+	
+	return;
 	
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-void WriteWorkers::DatabaseJobFail(void*& arg){
+void DatabaseWorkers::DatabaseJobFail(void*& arg){
 	
 	// safety check in case the job somehow fails after returning its args to the pool
 	if(arg==nullptr){
+		std::cerr<<"multicast worker fail with no args"<<std::endl;
 		return; // FIXME log this occurrence?
 	}
 	
@@ -226,86 +264,92 @@ void WriteWorkers::DatabaseJobFail(void*& arg){
 	//query.result.clear(); // to clear/release bad results...
 	// ideally we want to pass back an error or what happened to the client?
 	
-	WriteJobStruct* m_args=reinterpret_cast<DatabaseJobStruct*>(arg);
-	++(*m_args->m_data->db_worker_job_fails);
+	DatabaseJobStruct* m_args=static_cast<DatabaseJobStruct*>(arg);
+	std::cerr<<m_args->m_job_name<<" failure"<<std::endl;
+	++(m_args->monitoring_vars->jobs_failed);
 	
 	// return our job args to the pool
-	m_args->m_pool.Add(m_args);
+	m_args->m_pool->Add(m_args);
 	m_args = nullptr;  // clear the local m_args variable... not strictly necessary
 	arg = nullptr;     // clear the job 'data' member variable
 	
+	return;
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-void DatabaseWorkers::DatabaseJob(void*& arg){
+bool DatabaseWorkers::DatabaseJob(void*& arg){
 	
-	DatabaseJobStruct* m_args = dynamic_cast<DatabaseJobStruct*>(arg);
+	DatabaseJobStruct* m_args = static_cast<DatabaseJobStruct*>(arg);
 	
 	// the worker will need a connection to the database
-	thread_local pqxx::connection* conn;
+	thread_local std::unique_ptr<pqxx::connection> conn;
 	if(conn==nullptr){
-		conn = new pqxx::connection(m_args->connection_string);
+		conn.reset(new pqxx::connection(DatabaseWorkers::connection_string));
 		if(!conn){
-			Log("Failed to open connection to database for worker thread!",v_error); // FIXME logging
+			//Log("Failed to open connection to database for worker thread!",v_error); // FIXME logging
 			// FIXME terminate this worker... m_args->running=false?
-			return;
+			return false;
 		} else {
 			// set up prepared statements. These are, sadly, a property of the connection
 			// logging insert
-			conn.prepare("logging_insert", "INSERT INTO logging ( time, device, severity, message ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, severity int, message text)");
+			conn->prepare("logging_insert", "INSERT INTO logging ( time, device, severity, message ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, severity int, message text)");
 			// monitoring insert
-			conn.prepare("monitoring_insert", "INSERT INTO monitoring ( time, device, severity, message ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, subject text, data jsonb)");
+			conn->prepare("monitoring_insert", "INSERT INTO monitoring ( time, device, subject, data ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, subject text, data jsonb)");
 			// alarms insert
-			conn.prepare("alarms_insert", "INSERT INTO alarms ( time, device, level, alarm ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, level int, alarm text)");
+			conn->prepare("alarms_insert", "INSERT INTO alarms ( time, device, level, alarm ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, level int, alarm text)");
 			// rootplot insert
-			conn.prepare("rootplots_insert", "INSERT INTO rootplots ( time, name, data, draw_options ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, data jsonb, draw_options text)");
+			conn->prepare("rootplots_insert", "INSERT INTO rootplots ( time, name, data, draw_options ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, data jsonb, draw_options text)");
 			// plotlyplot insert
-			conn.prepare("plotlyplots_insert", "INSERT INTO plotlyplots ( time, name, data, layout ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, data jsonb, layout jsonb)");
+			conn->prepare("plotlyplots_insert", "INSERT INTO plotlyplots ( time, name, data, layout ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, data jsonb, layout jsonb)");
 			// calibration insert
-			conn.prepare("calibration_insert", "INSERT INTO calibration ( time, name, severity, message ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, description text, data jsonb)");
+			conn->prepare("calibration_insert", "INSERT INTO calibration ( time, name, severity, message ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, description text, data jsonb)");
 			// device config insert
-			conn.prepare("device_config_insert", "INSERT INTO device_config ( time, device, author, description, data ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, author text, description text, data jsonb)");
+			conn->prepare("device_config_insert", "INSERT INTO device_config ( time, device, author, description, data ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, author text, description text, data jsonb)");
 			// run config insert
-			conn.prepare("run_config_insert", "INSERT INTO run_config ( time, name, author, description, data ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, author text, description text, data jsonb)");
+			conn->prepare("run_config_insert", "INSERT INTO run_config ( time, name, author, description, data ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, author text, description text, data jsonb)");
+		}
 	}
 	
+	// FIXME if the DB goes down, implement some sort of pausing(?) or local recording to local disk (SQLite?)
+	
 	// we also use a single transaction for all queries, so open that now
-	pqxx::work tx(conn); // aka pqxx::transaction<>
+	pqxx::work tx(*conn.get()); // aka pqxx::transaction<>
 	
 	// insert new logging statements
 	try {
 		tx.exec(pqxx::prepped{"logging_insert"}, pqxx::params{m_args->logging_queue});
-		++(*m_args->m_data->n_logging_submissions);
+		++(m_args->monitoring_vars->logging_submissions);
 	} catch (std::exception& e){
-		++(*m_args->m_data->n_logging_submissions_failed);
+		++(m_args->monitoring_vars->logging_submissions_failed);
 		// FIXME log the error here
+		// FIXME if we catch (pqxx::sql_error const &e) or others can we get better information?
 	}
 	
 	// insert new monitoring statements
 	try {
 		tx.exec(pqxx::prepped{"monitoring_insert"}, pqxx::params{m_args->monitoring_queue});
-		++(*m_args->m_data->n_monitoring_submissions);
+		++(m_args->monitoring_vars->monitoring_submissions);
 	} catch (std::exception& e){
-		++(*m_args->m_data->n_monitoring_submissions_failed);
+		++(m_args->monitoring_vars->monitoring_submissions_failed);
 		// FIXME log the error here
 	}
 	
 	// insert new multicast rootplot statements
 	try {
 		tx.exec(pqxx::prepped{"rootplots_insert"}, pqxx::params{m_args->rootplot_queue});
-		++(*m_args->m_data->n_rootplot_submissions);
+		++(m_args->monitoring_vars->rootplot_submissions);
 	} catch (std::exception& e){
-		++(*m_args->m_data->n_rootplot_submissions_failed);
+		++(m_args->monitoring_vars->rootplot_submissions_failed);
 		// FIXME log the error here
 	}
 	
 	// insert new multicast plotlyplot statements
 	try {
 		tx.exec(pqxx::prepped{"plotlyplots_insert"}, pqxx::params{m_args->plotlyplot_queue});
-		++(*m_args->m_data->n_plotlyplot_submissions);
+		++(m_args->monitoring_vars->plotlyplot_submissions);
 	} catch (std::exception& e){
-		++(*m_args->m_data->n_plotlyplot_submissions_failed);
+		++(m_args->monitoring_vars->plotlyplot_submissions_failed);
 		// FIXME log the error here
 	}
 	
@@ -317,10 +361,10 @@ void DatabaseWorkers::DatabaseJob(void*& arg){
 		try {
 			tx.exec(pqxx::prepped{"alarms_insert"}, pqxx::params{batch->alarm_buffer});
 			batch->alarm_batch_success = true;
-			++(*m_args->m_data->n_alarm_submissions);
+			++(m_args->monitoring_vars->alarm_submissions);
 		} catch (std::exception& e){
 			batch->alarm_batch_success = false;
-			++(*m_args->m_data->n_alarm_submissions_failed);
+			++(m_args->monitoring_vars->alarm_submissions_failed);
 			// FIXME log the error here
 		}
 		
@@ -336,9 +380,9 @@ void DatabaseWorkers::DatabaseJob(void*& arg){
 				[&batch](int32_t new_version_num){
 					batch->devconfig_version_nums.push_back(new_version_num);
 				}, pqxx::params{batch->devconfig_buffer});
-			++(*m_args->m_data->n_devconfig_submissions);
+			++(m_args->monitoring_vars->devconfig_submissions);
 		} catch (std::exception& e){
-			++(*m_args->m_data->n_devconfig_submissions_failed);
+			++(m_args->monitoring_vars->devconfig_submissions_failed);
 			// FIXME log the error here
 		}
 		
@@ -348,9 +392,9 @@ void DatabaseWorkers::DatabaseJob(void*& arg){
 				[&batch](int32_t new_version_num){
 					batch->runconfig_version_nums.push_back(new_version_num);
 				}, pqxx::params{batch->runconfig_buffer});
-			++(*m_args->m_data->n_runconfig_submissions);
+			++(m_args->monitoring_vars->runconfig_submissions);
 		} catch (std::exception& e){
-			++(*m_args->m_data->n_runconfig_submissions_failed);
+			++(m_args->monitoring_vars->runconfig_submissions_failed);
 			// FIXME log the error here
 		}
 		
@@ -360,9 +404,9 @@ void DatabaseWorkers::DatabaseJob(void*& arg){
 				[&batch](int32_t new_version_num){
 					batch->calibration_version_nums.push_back(new_version_num);
 				}, pqxx::params{batch->calibration_buffer});
-			++(*m_args->m_data->n_calibration_submissions);
+			++(m_args->monitoring_vars->calibration_submissions);
 		} catch (std::exception& e){
-			++(*m_args->m_data->n_calibration_submissions_failed);
+			++(m_args->monitoring_vars->calibration_submissions_failed);
 			// FIXME log the error here
 		}
 		
@@ -372,9 +416,9 @@ void DatabaseWorkers::DatabaseJob(void*& arg){
 				[&batch](int32_t new_version_num){
 					batch->rootplot_version_nums.push_back(new_version_num);
 				}, pqxx::params{batch->rooplot_buffer});
-			++(*m_args->m_data->n_rootplot_submissions);
+			++(m_args->monitoring_vars->rootplot_submissions);
 		} catch (std::exception& e){
-			++(*m_args->m_data->n_rootplot_submissions_failed);
+			++(m_args->monitoring_vars->rootplot_submissions_failed);
 			// FIXME log the error here
 		}
 		
@@ -384,10 +428,26 @@ void DatabaseWorkers::DatabaseJob(void*& arg){
 				[&batch](int32_t new_version_num){
 					batch->plotlyplot_version_nums.push_back(new_version_num);
 				}, pqxx::params{batch->plotlyplot_buffer});
-			++(*m_args->m_data->n_plotlyplot_submissions);
+			++(m_args->monitoring_vars->plotlyplot_submissions);
 		} catch (std::exception& e){
-			++(*m_args->m_data->n_plotlyplot_submissions_failed);
+			++(m_args->monitoring_vars->plotlyplot_submissions_failed);
 			// FIXME log the error here
+		}
+		
+		// generic query insertions
+		// we can't batch these as they're just arbitrary SQL from the user,
+		// so we need to loop over them.
+		// FIXME no performance optimisation here: don't expect there to be many... right?
+		// if there's a lot we could use a pipeline as below...but the overhead may not be worth it
+		for(size_t i : batch->generic_write_query_indices){
+			ZmqQuery& query = batch->queries[i];
+			try {
+				query.result = tx.exec(query.msg());
+				++(m_args->monitoring_vars->genericwrite_submissions);
+			} catch (std::exception& e){
+				++(m_args->monitoring_vars->genericwrite_submissions_failed);
+				// FIXME log the error here
+			}
 		}
 	}
 	
@@ -411,7 +471,7 @@ void DatabaseWorkers::DatabaseJob(void*& arg){
 		
 		// insert all the queries
 		for(ZmqQuery& query : batch->queries){
-			px.insert(query.msg); // returns a unique query_id (aka long)
+			px.insert(query.msg()); // returns a unique query_id (aka long)
 		}
 		
 		// and then get the results
@@ -419,18 +479,24 @@ void DatabaseWorkers::DatabaseJob(void*& arg){
 			try {
 				query.result.clear(); // should be redundant...but in case of error in ResultWorkers
 				if(px.empty()){
-					// we should never find the pipeline empty!
+					// we should never find the pipeline empty! ... i think?
+					// not sure if this may happen if we check too soon?? (i.e. no results ready *yet*?) FIXME??
 					// we call retreive once for each insert, somehow we've got out of sync!!
 					// FIXME log error, somehow we need to undo this mess.
 					// maybe it's best we do keep those query_ids after all...?
+					throw pqxx::failure{"empty pipeline"}; // or something..?
+				} else {
+					query.result = px.retrieve().second;
+					// technically this returns a pair of {query_id, result}
+					// TODO for safety we could ensure the id's match...
+					++(m_args->monitoring_vars->readquery_submissions);
+					// FIXME technically we should decrement this if we throw anywhere as the whole lot gets rolled back?
 				}
-				query.result = px.retrieve().second;
-				// technically this returns a pair of {query_id, result}
-				// TODO for safety we could ensure the id's match...
-				++(*m_args->m_data->n_readquery_submissions);
-				// FIXME technically we should decrement this if we throw anywhere as the whole lot gets rolled back?
 			} catch (std::exception& e){
-				++(*m_args->m_data->n_readquery_submissions_failed);
+				++(m_args->monitoring_vars->readquery_submissions_failed);
+				// how do we encapsulate this error in the pqxx::result class?
+				// if the query returns no rows, does result.empty() return the same as if it has no result?
+				query.result.clear(); // this sets `m_query=nullptr` so maybe we can use that as a check...
 			}
 		}
 		
@@ -466,15 +532,16 @@ void DatabaseWorkers::DatabaseJob(void*& arg){
 	                                    m_args->read_queue.begin(),m_args->read_queue.end());
 	locker.unlock();
 	
-	++(*m_args->m_data->db_worker_job_successes);
+	std::cerr<<m_args->m_job_name<<" completed"<<std::endl;
+	++(m_args->monitoring_vars->jobs_completed);
 	
 	// return our job args to the pool
-	m_args->m_pool.Add(m_args);  // return our job args to the job args struct pool
+	m_args->m_pool->Add(m_args);  // return our job args to the job args struct pool
 	m_args = nullptr;  // clear the local m_args variable... not strictly necessary
 	arg = nullptr;     // clear the job 'data' member variable
 	
 	
-	return;
+	return true;
 }
 
 

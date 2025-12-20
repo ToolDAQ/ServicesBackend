@@ -8,6 +8,10 @@
 #include "DAQDataModelBase.h"
 #include "Pool.h"
 #include "JobQueue.h"
+#include "QueryBatch.h"
+#include "ManagedSocket.h"
+#include "query_topics.h"
+class MonitoringVariables;
 
 /**
 * \class DataModel
@@ -28,9 +32,9 @@ class DataModel : public DAQDataModelBase {
 	public:
 	DataModel(); ///< Simple constructor
 	
-	private:
+	Utilities utils; ///< for thread management
 	
-	DAQUtilities utils; ///< for thread management
+	bool change_config; ///< signaller for Tools to reload their configuration variables
 	
 	// Tools can add connections to this and the SocketManager
 	// will periodically invoke UpdateConnections to connect clients
@@ -44,6 +48,9 @@ class DataModel : public DAQDataModelBase {
 	unsigned int worker_threads;
 	unsigned int max_worker_threads;
 	
+	std::map<std::string, MonitoringVariables*> monitoring_variables;
+	std::mutex monitoring_variables_mtx;
+	
 	/* ----------------------------------------- */
 	/*          MulticastReceiveSender           */
 	/* ----------------------------------------- */
@@ -54,7 +61,7 @@ class DataModel : public DAQDataModelBase {
 	// and grabs a new vector from the pool
 	// FIXME base pool size on available RAM and struct size / make configurable
 	// Pool::Pool(bool in_manage=false, uint16_t period_ms=1000, size_t in_object_cap=1)
-	Pool<std::vector<std::string>> multicast_buffer_pool(true, 5000, 100);
+	Pool<std::vector<std::string>> multicast_buffer_pool{true, 5000, 100};
 	
 	// batches of received messages, both logging and monitoring
 	// FIXME make these pairs or structs, container+mtx
@@ -64,51 +71,22 @@ class DataModel : public DAQDataModelBase {
 	std::vector<std::vector<std::string>*> in_multicast_msg_queue;
 	std::mutex in_multicast_msg_queue_mtx;
 	
-	// Logging
-	// -------
-	// Tracking
-	//{ TODO encapsulate in Tool monitoring struct?
-	std::atomic<int> log_polls_failed; // error polling socket
-	std::atomic<int> log_recv_fails;  // error in recv_from
-	std::atomic<int> logs_recvd; // messages successfully received
-	std::atomic<int> log_in_buffer_transfers; // transfers of thread-local message vector to datamodel
-	std::atomic<int> log_out_buffer_transfers; // transfers of thread-local message vector to datamodel
-	std::atomic<int> log_thread_crashes; // restarts of logging thread (main thread found reader thread 'running' was false)
-	//}
 	// outgoing logging messages
 	std::vector<std::string> out_log_msg_queue;
 	std::mutex out_log_msg_queue_mtx;
 	
-	// Monitoring
-	// ----------
-	//{
-	std::atomic<int> mon_polls_failed;
-	std::atomic<int> mon_recv_fails;
-	std::atomic<int> mons_recvd;
-	std::atomic<int> mon_in_buffer_transfers; // transfers of thread-local message vector to datamodel
-	std::atomic<int> mon_out_buffer_transfers; // transfers of thread-local message vector to datamodel
-	std::atomic<int> mon_thread_crashes;
-	//}
 	// outgoing monitoring messages
 	std::vector<std::string> out_mon_msg_queue;
 	std::mutex out_mon_msg_queue_mtx;
 	
 	// pool is shared between read and write query receivers
-	Pool<QueryBatch> querybatch_pool(true, 5000, 100);
+	Pool<QueryBatch> querybatch_pool{true, 5000, 100};
 	
 	/* ----------------------------------------- */
 	/*               PubReceiver                 */
 	/* ----------------------------------------- */
-	// TODO Tool monitoring struct?
 	std::vector<QueryBatch*> write_msg_queue;
 	std::mutex write_msg_queue_mtx;
-	std::atomic<int> write_polls_failed;
-	std::atomic<int> write_msgs_rcvd;
-	std::atomic<int> write_rcv_fails;
-	std::atomic<int> write_bad_msgs;
-	std::atomic<int> write_buffer_transfers;
-	std::atomic<int> pub_rcv_thread_crashes;
-	//}
 	
 	/* ----------------------------------------- */
 	/*                 ReadReply                 */
@@ -116,19 +94,8 @@ class DataModel : public DAQDataModelBase {
 	// TODO Tool monitoring struct?
 	std::vector<QueryBatch*> read_msg_queue;
 	std::mutex read_msg_queue_mtx;
-	std::vector<QueryBatch*> query_replies;
+	std::deque<QueryBatch*> query_replies;
 	std::mutex query_replies_mtx;
-	
-	std::atomic<int> readrep_polls_failed;
-	std::atomic<int> readrep_msgs_rcvd;
-	std::atomic<int> readrep_rcv_fails;
-	std::atomic<int> readrep_bad_msgs;
-	std::atomic<int> readrep_reps_sent;
-	std::atomic<int> readrep_rep_send_fails;
-	std::atomic<int> readrep_in_buffer_transfers;
-	std::atomic<int> readrep_out_buffer_transfers;
-	std::atomic<int> read_rcv_thread_crashes;
-	
 	
 	/* ----------------------------------------- */
 	/*              MulticastWorkers             */
@@ -149,49 +116,20 @@ class DataModel : public DAQDataModelBase {
 	std::vector<std::string> plotlyplot_query_queue;
 	std::mutex plotlyplot_query_queue_mtx;
 	
-	std::atomic<int> multicast_job_distributor_thread_crashes;
-	std::atomic<int> multicast_worker_job_fails;
-	std::atomic<int> multicast_worker_job_successes;
-	
 	/* ----------------------------------------- */
 	/*                WriteWorkers               */
 	/* ----------------------------------------- */
-	std::atomic<int> write_job_distributor_thread_crashes;
-	
 	std::vector<QueryBatch*> write_query_queue;
 	std::mutex write_query_queue_mtx;
-	
-	std::atomic<int> write_worker_job_fails;
-	std::atomic<int> write_worker_job_successes;
 	
 	/* ----------------------------------------- */
 	/*               DatabaseWorkers             */
 	/* ----------------------------------------- */
 	
-	std::atomic<int> database_job_distributor_thread_crashes;
 	std::vector<QueryBatch*> read_replies; // output, awaiting for result conversion
 	std::mutex read_replies_mtx;
 	
-	std::atomic<int> db_worker_job_successes; // FIXME add for others
-	std::atomic<int> db_worker_job_fails;
-	
-	/* ----------------------------------------- */
-	/*                ResultWorkers              */
-	/* ----------------------------------------- */
-	std::atomic<int> result_job_distributor_thread_crashes;
-	
-	std::atomic<int> result_worker_job_fails;
-	std::atomic<int> result_worker_job_successes;
-	
-	/* ----------------------------------------- */
-	/*                  Monitoring               */
-	/* ----------------------------------------- */
-	std::atomic<int> monitoring_thread_crashes;
-	
-	/* ----------------------------------------- */
-	/*                 SocketManager             */
-	/* ----------------------------------------- */
-	std::atomic<int> socket_manager_thread_crashes;
+	private:
 	
 };
 

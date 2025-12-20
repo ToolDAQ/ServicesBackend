@@ -6,6 +6,7 @@
 
 #include "Tool.h"
 #include "DataModel.h"
+#include "WriteReceiveMonitoring.h"
 
 /**
 * \class WriteQueryReceiver
@@ -20,7 +21,9 @@
 
 struct WriteQueryReceiver_args : public Thread_args {
 	
+	std::string m_tool_name;
 	DataModel* m_data;
+	WriteReceiveMonitoring* monitoring_vars;
 	zmq::socket_t* socket=nullptr;
 	std::mutex* socket_mtx; // for sharing the socket with ServicesManager Tool for finding clients
 	
@@ -49,6 +52,7 @@ class WriteQueryReceiver: public Tool {
 	private:
 	static void Thread(Thread_args* args);
 	WriteQueryReceiver_args thread_args;
+	WriteReceiveMonitoring monitoring_vars;
 	
 	std::string port_name; // name by which clients advertise sockets for sending write queries to the DB
 	

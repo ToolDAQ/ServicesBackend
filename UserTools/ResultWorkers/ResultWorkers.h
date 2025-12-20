@@ -6,7 +6,7 @@
 
 #include "Tool.h"
 #include "DataModel.h"
-
+#include "ResultWorkerMonitoring.h"
 
 /**
 * \class ResultWorkers
@@ -21,9 +21,11 @@
 // class for things passed to result worker threads
 struct ResultJobStruct {
 	
-	ResultJobStruct(Pool<ResultJobStruct>* pool, DataModel* data) : m_pool(pool) m_data(data){};
+	ResultJobStruct(Pool<ResultJobStruct>* pool, DataModel* data, ResultWorkerMonitoring* mon) : m_pool(pool), m_data(data), monitoring_vars(mon){};
 	DataModel* m_data;
+	ResultWorkerMonitoring* monitoring_vars;
 	Pool<ResultJobStruct>* m_pool;
+	std::string m_job_name;
 	QueryBatch* batch;
 	std::stringstream ss;
 	std::string tmpval;
@@ -33,8 +35,9 @@ struct ResultJobStruct {
 struct ResultJobDistributor_args : Thread_args {
 	
 	DataModel* m_data;
+	ResultWorkerMonitoring* monitoring_vars;
 	std::vector<QueryBatch*> local_msg_queue;       // swap with datamodel and then pass out to jobs
-	Pool<ResultJobStruct> job_struct_pool(true, 1000, 100); ///< pool for job args structs // FIXME default args
+	Pool<ResultJobStruct> job_struct_pool{true, 1000, 100}; ///< pool for job args structs // FIXME default args
 	
 };
 
@@ -49,8 +52,9 @@ class ResultWorkers: public Tool {
 	private:
 	static void Thread(Thread_args* args);
 	ResultJobDistributor_args thread_args; ///< args for the child thread that makes jobs for the job queue
+	ResultWorkerMonitoring monitoring_vars;
 	
-	static void ResultJob(void*& arg);
+	static bool ResultJob(void*& arg);
 	static void ResultJobFail(void*& args);
 	
 };

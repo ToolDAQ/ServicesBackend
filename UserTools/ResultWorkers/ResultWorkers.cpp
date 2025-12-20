@@ -5,15 +5,21 @@ ResultWorkers::ResultWorkers():Tool(){}
 
 bool ResultWorkers::Initialise(std::string configfile, DataModel &data){
 	
-	if(configfile!="")  m_variables.Initialise(configfile);
+	InitialiseTool(data);
+	m_configfile = configfile;
+	InitialiseConfiguration(configfile);
 	//m_variables.Print();
-	
-	m_data= &data;
-	m_log= m_data->Log;
 	
 	if(!m_variables.Get("verbose",m_verbose)) m_verbose=1;
 	
+	ExportConfiguration();
+	
+	// monitoring struct to encapsulate tracking info
+	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
+	m_data->monitoring_variables.emplace(m_tool_name, &monitoring_vars);
+	
 	thread_args.m_data = m_data;
+	thread_args.monitoring_vars = &monitoring_vars;
 	m_data->utils.CreateThread("result_job_distributor", &Thread, &thread_args);
 	m_data->num_threads++;
 	
@@ -28,8 +34,8 @@ bool ResultWorkers::Execute(){
 	if(!thread_args.running){
 		Log(m_tool_name+" Execute found thread not running!",v_error);
 		Finalise();
-		Initialise(); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
-		++m_data->result_job_distributor_thread_crashes;
+		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
+		++(monitoring_vars.thread_crashes);
 	}
 	
 	return true;
@@ -41,9 +47,12 @@ bool ResultWorkers::Finalise(){
 	// signal job distributor thread to stop
 	Log(m_tool_name+": Joining receiver thread",v_warning);
 	m_data->utils.KillThread(&thread_args);
-	Log(m_tool_name+": Finished",v_warning);
 	m_data->num_threads--;
 	
+	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
+	m_data->monitoring_variables.erase(m_tool_name);
+	
+	Log(m_tool_name+": Finished",v_warning);
 	return true;
 }
 
@@ -63,13 +72,14 @@ void ResultWorkers::Thread(Thread_args* args){
 	for(int i=0; i<m_args->local_msg_queue.size(); ++i){
 		
 		// add a new Job to the job queue to process this data
-		Job* the_job = job_pool.GetNew("result_worker");
+		Job* the_job = m_args->m_data->job_pool.GetNew("result_worker");
+		the_job->out_pool = &m_args->m_data->job_pool;
 		if(the_job->data == nullptr){
 			// on first creation of the job, make it a JobStruct to encapsulate its data
 			// N.B. Pool::GetNew will only invoke the constructor if this is a new instance,
 			// (not if it's been used before and then returned to the pool)
 			// so don't pass job-specific variables to the constructor
-			the_job->data = job_struct_pool.GetNew(&job_struct_pool, m_args->m_data);
+			the_job->data = m_args->job_struct_pool.GetNew(&m_args->job_struct_pool, m_args->m_data, m_args->monitoring_vars);
 		} else {
 			// FIXME error
 			std::cerr<<"result_worker Job with non-null data pointer!"<<std::endl;
@@ -78,10 +88,11 @@ void ResultWorkers::Thread(Thread_args* args){
 		the_job->func = ResultJob;
 		the_job->fail_func = ResultJobFail;
 		
-		ResultJobStruct* job_data = dynamic_cast<ResultJobStruct*>(the_job->data);
+		ResultJobStruct* job_data = static_cast<ResultJobStruct*>(the_job->data);
 		job_data->batch = m_args->local_msg_queue[i];
+		job_data->m_job_name = "result_worker";
 		
-		/*ok =*/ m_args->m_data->job_queue.AddJob(the_job); // just checks if you've defined func and first_vals = true;
+		m_args->m_data->job_queue.AddJob(the_job);
 		
 	}
 	
@@ -89,7 +100,7 @@ void ResultWorkers::Thread(Thread_args* args){
 	// maybe we can generalise to setreply if needed, depending on reply format & batching of read queries
 	// or do we just do this in the connection / reply sender thread(s)?
 	
-	return true;
+	return;
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
@@ -98,6 +109,7 @@ void ResultWorkers::ResultJobFail(void*& arg){
 	
 	// safety check in case the job somehow fails after returning its args to the pool
 	if(arg==nullptr){
+		std::cerr<<"multicast worker fail with no args"<<std::endl;
 		return; // FIXME log this occurrence?
 	}
 	
@@ -105,16 +117,18 @@ void ResultWorkers::ResultJobFail(void*& arg){
 	// - we had the results, but then lost them before sending
 	
 	ResultJobStruct* m_args=reinterpret_cast<ResultJobStruct*>(arg);
-	++(*m_args->m_data->result_worker_job_fails);
+	std::cerr<<m_args->m_job_name<<" failure"<<std::endl;
+	++(m_args->monitoring_vars->jobs_failed);
 	
 	// return our job args to the pool
-	m_args->m_pool.Add(m_args);
+	m_args->m_pool->Add(m_args);
 	m_args = nullptr;  // clear the local m_args variable... not strictly necessary
 	arg = nullptr;     // clear the job 'data' member variable
 	
+	return;
 }
 
-void ResultWorkers::ResultJob(void*& arg){
+bool ResultWorkers::ResultJob(void*& arg){
 	
 	ResultJobStruct* m_args = reinterpret_cast<ResultJobStruct*>(arg);
 	
@@ -131,55 +145,85 @@ void ResultWorkers::ResultJob(void*& arg){
 			for(ZmqQuery& query : m_args->batch->queries){
 				
 				// set whether the query succeeded or threw an exception
-				query.setsuccess(uint32_t succeeded); // FIXME FILL
-				
-				// returned rows are sent back formatted as JSON, with each row a new zmq::message_t
-				// resize zmq vector in preparation
-				query.setresponserows(std::size(query.result));
-				
-				if(query.topic()[2]!=query_topic::generic){
+				if(query.result.query().empty()){  // FIXME not sure if this is a good check necessarily, esp w/pipelining?
 					
-					// standard queries generated by the libDAQInterface use `row_to_json`
-					// to request results already packaged up into one JSON per row
-					// so all we need to do is copy that into the zmq message
-					for(size_t i=0; i<std::size(query.result); ++i){
-						query.setresponse(i, query.result[i].c_str());
-					}
-					query.result.clear();
+					query.setsuccess(0);
+					query.setresponserows(0);
 					
 				} else {
+					query.setsuccess(1);
 					
-					// FIXME if we can safely shoehorn in a wrapping call to `row_to_json`
-					// around a user's generic sql, we can combine this with the above.
-					// But, given the arbitrary complexity of statements, this may not be possible.
-					// in which case, we need to loop over rows and convert them to JSON manually
-					for(size_t i=0; i<std::size(query.result); ++i){
+					// returned rows are sent back formatted as JSON, with each row a new zmq::message_t
+					// resize zmq vector in preparation
+					query.setresponserows(std::size(query.result));
+					
+					if(query_topic{query.topic()[2]}!=query_topic::generic){
 						
-						// build a json from fields in this row
-						m_args->tmpval = "{";
-						for (pqxx::row::iterator it=query.result[i].begin(); it<query.result[i].end(); ++it){
-							if(it!=query.result[i].begin()) m_args->tmpval += ", ";
-							m_args->tmpval += "\"" + it->name() + "\":";
-							// Field values are returned bare: i.e. '3' or 'cat' or '{"iam":"ajson"}'
-							// but to convert this into JSON, strings need to be quoted:
-							// i.e. { "field1":3, "field2":"cat", "field3":{"iam":"ajson"} }
-							// this means we need to add enclosing quotes *only* for string fields
-							if((it->type()==18) || (it->type()==25) || (it->type()==1042) || (it->type()==1043)){
-								m_args->tmpval += "\""+it->c_str()+"\"";
-							} else {
-								m_args->tmpval += it->c_str();
+						// just for good measure, when we try to access the pqxx result,
+						// enclose within try just in case it throws something
+						try {
+							// standard queries generated by the libDAQInterface use `row_to_json`
+							// to request results already packaged up into one JSON per row
+							// so all we need to do is copy that into the zmq message
+							for(size_t i=0; i<std::size(query.result); ++i){
+								query.setresponse(i, query.result[i][0].c_str());
 							}
+						} catch (std::exception& e){
+							// just for good measure, when we try to access the pqxx result,
+							// enclose within try just in case it throws something
+							std::cerr<<"caught "<<e.what()<<" trying to access query result!"<<std::endl;
+							query.setsuccess(0);
+							query.setresponserows(0);
+							++(m_args->monitoring_vars->result_access_errors);
 						}
-						m_args->tmpval += "}";
 						
-						query.setresponse(i, m_args->tmpval);
+					} else {
 						
-					}
+						// just for good measure, when we try to access the pqxx result,
+						// enclose within try just in case it throws something
+						try {
+							// TODO if we can safely shoehorn in a wrapping call to `row_to_json`
+							// around a user's generic sql, we can combine this with the above.
+							// But, given the arbitrary complexity of statements, this may not be possible.
+							// in which case, we need to loop over rows and convert them to JSON manually
+							for(size_t i=0; i<std::size(query.result); ++i){
+								
+								// build a json from fields in this row
+								m_args->tmpval = "{";
+								for (pqxx::row::iterator it=query.result[i].begin(); it<query.result[i].end(); ++it){
+									if(it!=query.result[i].begin()) m_args->tmpval += ", ";
+									m_args->tmpval += "\"" + std::string{it->name()} + "\":";
+									// Field values are returned bare: i.e. '3' or 'cat' or '{"iam":"ajson"}'
+									// but to convert this into JSON, strings need to be quoted:
+									// i.e. { "field1":3, "field2":"cat", "field3":{"iam":"ajson"} }
+									// this means we need to add enclosing quotes *only* for string fields
+									if((it->type()==18) || (it->type()==25) || (it->type()==1042) || (it->type()==1043)){
+										m_args->tmpval += "\""+std::string{it->c_str()}+"\"";
+									} else {
+										m_args->tmpval += it->c_str();
+									}
+								}
+								m_args->tmpval += "}";
+								
+								query.setresponse(i, m_args->tmpval);
+							}
+							
+						} catch (std::exception& e){
+							std::cerr<<"caught "<<e.what()<<" trying to access query result!"<<std::endl;
+							query.setsuccess(0);
+							query.setresponserows(0);
+							++(m_args->monitoring_vars->result_access_errors);
+						}
+						
+					} // generic query, manual json formation rom fields
+					
+					// release pqxx::result
 					query.result.clear();
 					
-				}
-				
+				} // if we had a result object
 			} // loop over queries in this batch
+			
+			++(m_args->monitoring_vars->read_batches_processed);
 			
 		} else {
 			
@@ -198,7 +242,7 @@ void ResultWorkers::ResultJob(void*& arg){
 			
 			for(ZmqQuery& query : m_args->batch->queries){
 				
-				switch(query.topic()[2]){
+				switch(query_topic{query.topic()[2]}){
 					// alarms return just the success status
 					case query_topic::alarm:
 						query.setsuccess(m_args->batch->alarm_batch_success);
@@ -210,7 +254,7 @@ void ResultWorkers::ResultJob(void*& arg){
 						query.setsuccess(devconfigs_ok);
 						if(devconfigs_ok){
 							query.setresponserows(1);
-							query.setresponse(0, devconfig_version_nums[devconfig_i++]);
+							query.setresponse(0, m_args->batch->devconfig_version_nums[devconfig_i++]);
 						}
 						break;
 						
@@ -218,7 +262,7 @@ void ResultWorkers::ResultJob(void*& arg){
 						query.setsuccess(runconfigs_ok);
 						if(runconfigs_ok){
 							query.setresponserows(1);
-							query.setresponse(0, runconfig_version_nums[runconfig_i++]);
+							query.setresponse(0, m_args->batch->runconfig_version_nums[runconfig_i++]);
 						}
 						break;
 						
@@ -226,7 +270,7 @@ void ResultWorkers::ResultJob(void*& arg){
 						query.setsuccess(calibrations_ok);
 						if(calibrations_ok){
 							query.setresponserows(1);
-							query.setresponse(0, calibration_version_nums[calibration_i++]);
+							query.setresponse(0, m_args->batch->calibration_version_nums[calibration_i++]);
 						}
 						break;
 						
@@ -234,7 +278,7 @@ void ResultWorkers::ResultJob(void*& arg){
 						query.setsuccess(plotlyplots_ok);
 						if(plotlyplots_ok){
 							query.setresponserows(1);
-							query.setresponse(0, plotlyplot_version_nums[plotlyplot_i++]);
+							query.setresponse(0, m_args->batch->plotlyplot_version_nums[plotlyplot_i++]);
 						}
 						break;
 						
@@ -242,16 +286,61 @@ void ResultWorkers::ResultJob(void*& arg){
 						query.setsuccess(rootplots_ok);
 						if(rootplots_ok){
 							query.setresponserows(1);
-							query.setresponse(0, rootplot_version_nums[rootplot_i++]);
+							query.setresponse(0, m_args->batch->rootplot_version_nums[rootplot_i++]);
+						}
+						break;
+						
+					case query_topic::generic:
+						// just for good measure, when we try to access the pqxx result,
+						// enclose within try just in case it throws something
+						try {
+							// TODO if we can safely shoehorn in a wrapping call to `row_to_json`
+							// around a user's generic sql, we can combine this with the above.
+							// But, given the arbitrary complexity of statements, this may not be possible.
+							// in which case, we need to loop over rows and convert them to JSON manually
+							for(size_t i=0; i<std::size(query.result); ++i){
+								
+								// build a json from fields in this row
+								m_args->tmpval = "{";
+								for (pqxx::row::iterator it=query.result[i].begin(); it<query.result[i].end(); ++it){
+									if(it!=query.result[i].begin()) m_args->tmpval += ", ";
+									m_args->tmpval += "\"" + std::string{it->name()} + "\":";
+									// Field values are returned bare: i.e. '3' or 'cat' or '{"iam":"ajson"}'
+									// but to convert this into JSON, strings need to be quoted:
+									// i.e. { "field1":3, "field2":"cat", "field3":{"iam":"ajson"} }
+									// this means we need to add enclosing quotes *only* for string fields
+									if((it->type()==18) || (it->type()==25) || (it->type()==1042) || (it->type()==1043)){
+										m_args->tmpval += "\""+std::string{it->c_str()}+"\"";
+									} else {
+										m_args->tmpval += it->c_str();
+									}
+								}
+								m_args->tmpval += "}";
+								
+								query.setresponse(i, m_args->tmpval);
+							}
+							
+						} catch (std::exception& e){
+							std::cerr<<"caught "<<e.what()<<" trying to access query result!"<<std::endl;
+							query.setsuccess(0);
+							query.setresponserows(0);
+							++(m_args->monitoring_vars->result_access_errors);
 						}
 						break;
 						
 					default:
 						// FIXME corrupted topic, log it.
+						//std::cerr<<m_tool_name<<"unknown topic"<<std::endl;
+						break;
 					
 				}
 				
+				// release pqxx::result
+				query.result.clear();
+				
 			} // loop over queries in this batch
+			
+			++(m_args->monitoring_vars->write_batches_processed);
 			
 		} // if/else on whether this batch was read/write
 		
@@ -264,14 +353,15 @@ void ResultWorkers::ResultJob(void*& arg){
 	m_args->m_data->query_replies.push_back(m_args->batch);
 	locker.unlock();
 	
-	++(*m_args->m_data->result_worker_job_successes);
+	std::cerr<<m_args->m_job_name<<" completed"<<std::endl;
+	++(m_args->monitoring_vars->jobs_completed);
 	
 	// return our job args to the pool
-	m_args->m_pool.Add(m_args);  // return our job args to the job args struct pool
+	m_args->m_pool->Add(m_args);  // return our job args to the job args struct pool
 	m_args = nullptr;  // clear the local m_args variable... not strictly necessary
 	arg = nullptr;     // clear the job 'data' member variable
 	
-	return;
+	return true;
 }
 
 

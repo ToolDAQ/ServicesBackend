@@ -1,11 +1,13 @@
 #ifndef QUERY_BATCH_H
 #define QUERY_BATCH_H
 
+#include <vector>
+
+#include "ZmqQuery.h"
+
 struct QueryBatch {
+	
 	// fill / read by receive/senders
-	QueryBatch(size_t prealloc_size){
-		queries.reserve(prealloc_size);
-	}
 	std::vector<ZmqQuery> queries;
 	
 	// prepare for batch insertion by workers
@@ -15,6 +17,22 @@ struct QueryBatch {
 	std::string calibration_buffer;
 	std::string plotlyplot_buffer;
 	std::string rooplot_buffer;
+	
+	// flagged for can't be batch inserted by workers
+	std::vector<size_t> generic_write_query_indices;
+	
+	// set by database workers after batch insert
+	bool alarm_batch_success;
+	std::vector<uint32_t> devconfig_version_nums;
+	std::vector<uint32_t> runconfig_version_nums;
+	std::vector<uint32_t> calibration_version_nums;
+	std::vector<uint32_t> plotlyplot_version_nums;
+	std::vector<uint32_t> rootplot_version_nums;
+	
+	QueryBatch(size_t prealloc_size){
+		queries.reserve(prealloc_size);
+	}
+	
 	void reset(){
 		alarm_buffer = "[";
 		devconfig_buffer = "[";
@@ -23,7 +41,7 @@ struct QueryBatch {
 		plotlyplot_buffer = "[";
 		rooplot_buffer = "[";
 		
-		alarm_batch_status = false;
+		alarm_batch_success = false;
 		
 		// the presence of returned version numbers is indication that these batch insertions worked
 		devconfig_version_nums.clear();
@@ -31,27 +49,9 @@ struct QueryBatch {
 		calibration_version_nums.clear();
 		plotlyplot_version_nums.clear();
 		rootplot_version_nums.clear();
+		generic_write_query_indices.clear();
 		
 	}
-	
-	// set by database workers for batch submissions
-	bool alarm_batch_success;
-	
-	 // FIXME check type returned from pqxx
-	std::vector<uint32_t> devconfig_version_nums;
-	std::vector<uint32_t> runconfig_version_nums;
-	std::vector<uint32_t> calibration_version_nums;
-	std::vector<uint32_t> plotlyplot_version_nums;
-	std::vector<uint32_t> rootplot_version_nums;
-	
-//	// convert to zmq message on return path by workers
-//	void setsuccess(uint32_t succeeded){
-//		for(ZmqQuery& q : queries) q.setsuccess(succeeded);
-//	}
-//	void setversionnums(){
-//		for(size_t i=0; i<ZmqQuery.size(); ++i) queries[i].setversionnum(version_nums[i]);
-//	}
-	// loop over all queries, move over status and version num using a tracking set of indices for each type
 	
 };
 

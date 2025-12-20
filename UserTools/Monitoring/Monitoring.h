@@ -7,7 +7,8 @@
 #include <chrono>
 
 #include "Tool.h"
-
+#include "DataModel.h"
+#include "MonitoringMonitoring.h"
 
 /**
 * \class Monitoring
@@ -19,14 +20,15 @@
 * Contact: marcus.o-flaherty@warwick.ac.uk
 */
 
-struct PubReceiver_args : public Thread_args {
+struct Monitoring_args : public Thread_args {
 	
 	DataModel* m_data;
+	MonitoringMonitoring* monitoring_vars;
 	std::chrono::time_point<std::chrono::steady_clock> last_send;
 	std::chrono::milliseconds monitoring_period_ms;
 	std::stringstream ss;
 	
-}
+};
 
 class Monitoring: public Tool {
 	public:
@@ -36,7 +38,11 @@ class Monitoring: public Tool {
 	bool Finalise(); ///< Finalise function used to clean up resources.
 	
 	private:
-	Thread_args thread_args;
+	static void Thread(Thread_args* args);
+	Monitoring_args thread_args;
+	MonitoringMonitoring monitoring_vars;
+	
+	static bool ResetStats(bool reset);
 	
 };
 

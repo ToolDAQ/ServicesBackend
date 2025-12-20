@@ -1,6 +1,8 @@
 #ifndef ZMQ_QUERY_H
 #define ZMQ_QUERY_H
-#include <zmq.h>
+
+#include <zmq.hpp>
+#include <pqxx/pqxx>
 
 struct ZmqQuery {
 	
@@ -18,7 +20,7 @@ struct ZmqQuery {
 	ZmqQuery& operator=(ZmqQuery&& c) = default;
 	
 	// 4 parts for receiving, for sending 3+ parts
-	std::vector<zmq::message_t> parts(4);
+	std::vector<zmq::message_t> parts{4};
 	size_t size() const {
 		return parts.size();
 	}
@@ -32,23 +34,23 @@ struct ZmqQuery {
 	}
 	// received and returned
 	std::string_view client_id(){
-		return std::string_view{parts[0].data(),parts[0].data().size()};
+		return std::string_view{(const char*)parts[0].data(),parts[0].size()};
 	}
 	uint32_t msg_id(){
 		return *reinterpret_cast<uint32_t*>(parts[1].data());
 	}
 	// received only
 	std::string_view topic(){
-		return std::string_view{parts[2].data(),parts[2].data().size()};
+		return std::string_view{(const char*)parts[2].data(),parts[2].size()};
 	}
 	std::string_view msg(){
-		return std::string_view{parts[3].data(),parts[3].data().size()};
+		return std::string_view{(const char*)parts[3].data(),parts[3].size()};
 	}
 	
 	// for setting success
 	void setsuccess(uint32_t succeeded){
-		//parts[2]=new(parts[2]) zmq::message_t(sizeof(uint32_t)); // uhh, is there a better way to call zmq_msg_init_size?
-		zmq_msg_init_size(&parts[2],sizeof(uint32_t)); // this is from underlying c api... FIXME?
+		//zmq_msg_init_size(&parts[2],sizeof(uint32_t)); // this is from underlying c api... mismatch zmq_msg_t* / zmq::message_t
+		new(&parts[2]) zmq::message_t(sizeof(uint32_t)); // FIXME is there a better way to call zmq_msg_init_size?
 		memcpy((void*)parts[2].data(),&succeeded,sizeof(uint32_t));
 		return;
 	}
@@ -61,12 +63,24 @@ struct ZmqQuery {
 		parts.resize(3+n_rows);
 		return;
 	}
-	void setresponse(size_t row_num, std::string_view row){
-		zmq_msg_init_size(&parts[row_num+3],row.size()); // this is from underlying c api... FIXME?
-		memcpy((void*)parts[row_num+3].data(),row.data(),row.size());
+	
+	void setresponse(size_t row_num, std::string_view val){
+		//zmq_msg_init_size(&parts[row_num+3],row.size()); // mismatch zmq_msg_t* / zmq::message_t
+		new(&parts[row_num+3]) zmq::message_t(val.size()); // FIXME better way to call zmq_msg_init_size
+		memcpy((void*)parts[row_num+3].data(),val.data(),val.size());
 		return;
 	}
-}
+	
+	template<typename T>
+	typename std::enable_if<std::is_fundamental<T>::value, void>::type
+	setresponse(size_t row_num, T val){
+		//zmq_msg_init_size(&parts[row_num+3],row.size()); // mismatch zmq_msg_t* / zmq::message_t
+		new(&parts[row_num+3]) zmq::message_t(sizeof(val)); // FIXME better way to call zmq_msg_init_size
+		memcpy((void*)parts[row_num+3].data(),&val,sizeof(val));
+		return;
+	}
+	
+};
 
 
 #endif

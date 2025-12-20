@@ -5,6 +5,7 @@
 
 #include "Tool.h"
 #include "DataModel.h"
+#include "WriteWorkerMonitoring.h"
 
 /**
 * \class WriteWorkers
@@ -19,20 +20,25 @@
 // class for things passed to multicast worker threads
 struct WriteJobStruct {
 	
-	WriteJobStruct(Pool<WriteJobStruct>* pool, DataModel* data) : m_pool(pool) m_data(data){};
+	WriteJobStruct(Pool<WriteJobStruct>* pool, DataModel* data, WriteWorkerMonitoring* mon) : m_pool(pool), m_data(data), monitoring_vars(mon){};
 	DataModel* m_data;
+	WriteWorkerMonitoring* monitoring_vars;
 	Pool<WriteJobStruct>* m_pool;
+	std::string m_job_name;
 	QueryBatch* local_msg_queue;
+	std::string* out_buffer;
 	
 };
 
 struct WriteJobDistributor_args : Thread_args {
 	
 	DataModel* m_data;
-	std::vector<std::vector<ZmqQuery>*> local_msg_queue;       // swap with datamodel and then pass out to jobs
+	WriteWorkerMonitoring* monitoring_vars;
+	std::string m_job_name;
+	std::vector<QueryBatch*> local_msg_queue;       // swap with datamodel and then pass out to jobs
 	// maybe we can use shared_ptr<void> instead of a job args pool? - only useful for jobs retaining their args,
 	// i.e. job queues of a single type of job.
-	Pool<WriteJobStruct> job_struct_pool(true, 1000, 100); ///< pool for job args structs // FIXME default args
+	Pool<WriteJobStruct> job_struct_pool{true, 1000, 100}; ///< pool for job args structs // FIXME default args
 	
 };
 
@@ -47,9 +53,10 @@ class WriteWorkers: public Tool {
 	private:
 	static void Thread(Thread_args* args);
 	WriteJobDistributor_args thread_args; ///< args for the child thread that makes jobs for the job queue
+	WriteWorkerMonitoring monitoring_vars;
 	
+	static bool WriteMessageJob(void*& arg);
 	static void WriteMessageFail(void*& arg);
-	static void WriteMessageJob(void*& arg);
 	
 };
 

@@ -1,15 +1,14 @@
-#include "ReadReceiverReplySender.h"
+#include "ReadQueryReceiverReplySender.h"
 
-ReadReceiverReplySender::ReadReceiverReplySender():Tool(){}
+ReadQueryReceiverReplySender::ReadQueryReceiverReplySender():Tool(){}
 
 //FIXME call it readqueryreceviverandreplysender
-bool ReadReceiverReplySender::Initialise(std::string configfile, DataModel &data){
+bool ReadQueryReceiverReplySender::Initialise(std::string configfile, DataModel &data){
 	
-	if(configfile!="")  m_variables.Initialise(configfile);
+	InitialiseTool(data);
+	m_configfile = configfile;
+	InitialiseConfiguration(configfile);
 	//m_variables.Print();
-	
-	m_data= &data;
-	m_log= m_data->Log;
 	
 	if(!m_variables.Get("verbose",m_verbose)) m_verbose=1;
 	
@@ -22,19 +21,21 @@ bool ReadReceiverReplySender::Initialise(std::string configfile, DataModel &data
 	int rcv_timeout_ms=500;
 	int snd_timeout_ms=500;
 	int poll_timeout_ms=500;
-	int rcv_hwm=10000;
+	int rcv_hwm=10000; // FIXME sufficient?
 	int conns_backlog=1000; // FIXME sufficient?
 	int local_buffer_size = 200;
 	int transfer_period_ms = 200;
 	
-	m_variables.Get("snd_timeout",snd_timeout_ms);
-	m_variables.Get("rcv_timeout",rcv_timeout_ms);
-	m_variables.Get("poll_timeout_ms",poll_timeout_ms);
 	m_variables.Get("port_name", port_name);
 	m_variables.Get("rcv_hwm", rcv_hwm); // max num outstanding messages in receive buffer
 	m_variables.Get("conns_backlog", conns_backlog); // max num oustanding connection requests
+	m_variables.Get("poll_timeout_ms",poll_timeout_ms);
+	m_variables.Get("snd_timeout_ms",snd_timeout_ms);
+	m_variables.Get("rcv_timeout_ms",rcv_timeout_ms);
 	m_variables.Get("local_buffer_size", local_buffer_size);
 	m_variables.Get("transfer_period_ms", transfer_period_ms);
+	
+	ExportConfiguration();
 	
 	/* ----------------------------------------- */
 	/*               Socket Setup                */
@@ -67,30 +68,31 @@ bool ReadReceiverReplySender::Initialise(std::string configfile, DataModel &data
 	}
 	*/
 	
-	// make items to poll the input and output sockets
+	// add the socket to the datamodel for the SocketManager, which will handle making new connections to clients
+	std::unique_lock<std::mutex> locker(m_data->managed_sockets_mtx);
+	m_data->managed_sockets[port_name] = managed_socket;
 	
 	/* ----------------------------------------- */
 	/*               Thread Setup                */
 	/* ----------------------------------------- */
 	
+	// monitoring struct to encapsulate tracking info
+	locker =std::unique_lock<std::mutex>(m_data->monitoring_variables_mtx);
+	m_data->monitoring_variables.emplace(m_tool_name, &monitoring_vars);
+	
 	thread_args.m_data = m_data;
+	thread_args.m_tool_name = m_tool_name;
+	thread_args.monitoring_vars = &monitoring_vars;
 	thread_args.socket = managed_socket->socket; // FIXME get from struct. 
-	thread_args.socket_mtx = managed_socket->socket_mtx; // FIXME get from struct. For sharing socket with SocketManager
+	thread_args.socket_mtx = &managed_socket->socket_mtx; // FIXME get from struct. For sharing socket with SocketManager
 	thread_args.poll_timeout_ms = poll_timeout_ms;
-	thread_args.polls.emplace_back(*socket,0,ZMQ_POLLIN,0);
-	thread_args.polls.emplace_back(*socket,0,ZMQ_POLLOUT,0);
-	thread_args.in_local_queue = m_data->querybatch_pool.GetNew();
-	thread_args.in_local_queue.reserve(local_buffer_size);
-	thread_args.local_buffer_size = local_buffer_size;
-	thread_args.transfer_period_ms = transfer_period_ms;
-	
-	// add the socket to the datamodel for the SocketManager, which will handle making new connections to clients
-	std::unique_lock<std::mutex> locker(m_data->managed_sockets_mtx);
-	m_data->managed_sockets[port_name] = managed_socket;
-	locker.unlock();
-	
-	m_args->in_local_queue = m_data->rdmsg_buffer_pool.GetNew(local_buffer_size);
+	thread_args.polls.emplace_back(*managed_socket->socket,0,ZMQ_POLLIN,0);
+	thread_args.polls.emplace_back(*managed_socket->socket,0,ZMQ_POLLOUT,0);
+	thread_args.in_local_queue = m_data->querybatch_pool.GetNew(local_buffer_size);
 	thread_args.make_new = true;
+	thread_args.local_buffer_size = local_buffer_size;
+	thread_args.transfer_period_ms = std::chrono::milliseconds{transfer_period_ms};
+	
 	m_data->utils.CreateThread("readrep_sendreceiver", &Thread, &thread_args); // thread needs a unique name
 	m_data->num_threads++;
 	
@@ -98,34 +100,25 @@ bool ReadReceiverReplySender::Initialise(std::string configfile, DataModel &data
 }
 
 
-bool ReadReceiverReplySender::Execute(){
+bool ReadQueryReceiverReplySender::Execute(){
 	
 	if(!thread_args.running){
 		Log(m_tool_name+" Execute found thread not running!",v_error);
 		Finalise();
-		Initialise(); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
-		++m_data->read_rcv_thread_crashes;
-	}
-	
-	if(m_data->managed_sockets.count(port_name)){
-		std::unique_lock<std::mutex> lock(m_data->managed_sockets_mtx);
-		ManagedSocket* sock = m_data->managed_sockets[port_name];
-		m_data->managed_sockets.erase(port_name);
-		locker.unlock();
-		if(sock->socket) delete sock->socket; // destructor closes socket
-		delete sock;
+		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
+		++(monitoring_vars.thread_crashes);
 	}
 	
 	return true;
 }
 
 
-bool ReadReceiverReplySender::Finalise(){
+bool ReadQueryReceiverReplySender::Finalise(){
 	
 	// signal background receiver thread to stop
 	Log(m_tool_name+": Joining receiver thread",v_warning);
 	m_data->utils.KillThread(&thread_args);
-	Log(m_tool_name+": Finished",v_warning);
+	std::cerr<<"ReadReceiver thread terminated"<<std::endl;
 	m_data->num_threads--;
 	
 	// FIXME ensure we don't interfere with SocketManager? Better to leave that to do deletion in its destructor?
@@ -137,35 +130,48 @@ bool ReadReceiverReplySender::Finalise(){
 	}
 	*/
 	
+	if(m_data->managed_sockets.count(port_name)){
+		std::unique_lock<std::mutex> locker(m_data->managed_sockets_mtx);
+		ManagedSocket* sock = m_data->managed_sockets[port_name];
+		m_data->managed_sockets.erase(port_name);
+		locker.unlock();
+		if(sock->socket) delete sock->socket; // destructor closes socket
+		delete sock;
+	}
+	
+	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
+	m_data->monitoring_variables.erase(m_tool_name);
+	
+	Log(m_tool_name+": Finished",v_warning);
 	return true;
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
-void ReadReceiverReplySender::Thread(Thread_args* args){
+void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 	
-	ReadReceiverReplySender_args* m_args = reinterpret_cast<ReadReceiverReplySender_args*>(args);
+	ReadQueryReceiverReplySender_args* m_args = reinterpret_cast<ReadQueryReceiverReplySender_args*>(args);
 	
 	// transfer to datamodel
 	// =====================
-	if(m_args->in_local_queue.size() >= m_args->local_buffer_size ||
-	  (m_args->last_transfer - std::chrono<steady_clock>now()) > transfer_period_ms){
+	if(m_args->in_local_queue->queries.size() >= m_args->local_buffer_size ||
+	  (m_args->last_transfer - std::chrono::steady_clock::now()) > m_args->transfer_period_ms){
 		
-		if(!make_new) pop_back();
-		if(!m_args->in_local_queue.empty()){
+		if(!m_args->make_new) m_args->in_local_queue->queries.pop_back();
+		if(!m_args->in_local_queue->queries.empty()){
+			
+			std::clog<<m_args->m_tool_name<<": added "<<m_args->in_local_queue->queries.size()
+			         <<" messages to datamodel"<<std::endl;
 			
 			std::unique_lock<std::mutex> locker(m_args->m_data->read_msg_queue_mtx);
 			m_args->m_data->read_msg_queue.push_back(m_args->in_local_queue);
 			locker.unlock();
 			
-			m_args->in_local_queue = m_args->m_data->querybatch_pool.GetNew();
-			m_args->in_local_queue.reserve(m_args->local_buffer_size);
+			m_args->in_local_queue = m_args->m_data->querybatch_pool.GetNew(m_args->local_buffer_size);
 			
-			m_args->m_data->Log(m_tool_name+": added "+std::to_string(next_index)
-				                +" messages to datamodel",5); // FIXME better logging
-			m_args->last_transfer = std::chrono<steady_clock>now();
+			m_args->last_transfer = std::chrono::steady_clock::now();
 			m_args->make_new=true;
-			++(*m_args->m_data->readrep_in_buffer_transfers);
+			++(m_args->monitoring_vars->in_buffer_transfers);
 			
 		}
 	}
@@ -173,125 +179,165 @@ void ReadReceiverReplySender::Thread(Thread_args* args){
 	// poll
 	// ====
 	try {
-		std::unique_lock<std::mutex> lock(m_args->socket_mtx);
-		get_ok = zmq::poll(&m_args->polls, 2, m_args->poll_timeout_ms);
+		m_args->get_ok=0;
+		std::unique_lock<std::mutex> locker(*m_args->socket_mtx);
+		m_args->get_ok = zmq::poll(m_args->polls.data(), 2, m_args->poll_timeout_ms);
 	} catch(zmq::error_t& err){
 		// ignore poll aborting due to signals
-		if(zmq_errno()==EINTR) return;
-		std::cerr<<m_tool_name<<" poll caught "<<err.what()<<std::endl; // FIXME better logging
-		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
-		++(*m_args->m_data->readrep_polls_failed);
-		return;
-	} // FIXME catch non-zmq errors? can we handle them any better?
-	catch(...){
-		std::cerr<<m_tool_name<<" poll caught "<<strerror(errno)<<std::endl;
-		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
-		++(*m_args->m_data->readrep_polls_failed);
+		if(zmq_errno()==EINTR) return; // this is probably fine
+		//std::cerr<<m_args->m_tool_name<<" poll caught "<<err.what()<<std::endl; // FIXME re-enable
+		++(m_args->monitoring_vars->polls_failed);
+//		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 		return;
 	}
-	if(get_ok<0){
-		std::cerr<<m_tool_name<<" poll caught "<<zmq_strerror(errno)<<std::endl;
-		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
-		++(*m_args->m_data->readrep_polls_failed);
+	catch(std::exception& err){
+		std::cerr<<m_args->m_tool_name<<" poll caught "<<err.what()<<std::endl;
+		++(m_args->monitoring_vars->polls_failed);
+//		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
+		return;
+	} catch(...){
+		std::cerr<<m_args->m_tool_name<<" poll caught "<<strerror(errno)<<std::endl;
+		++(m_args->monitoring_vars->polls_failed);
+//		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
+		return;
+	}
+	if(m_args->get_ok<0){
+		std::cerr<<m_args->m_tool_name<<" poll failed with "<<zmq_strerror(errno)<<std::endl;
+		++(m_args->monitoring_vars->polls_failed);
+//		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 		return;
 	}
 	
 	// read
 	// ====
 	if(m_args->polls[0].revents & ZMQ_POLLIN){
-		m_data->Log(">>> got a read query from client",3); // FIXME better logging
+		std::clog<<m_args->m_tool_name<<" receiving message"<<std::endl;
 		
 		if(m_args->make_new){
-			m_args->in_local_queue.emplace_back();
+			m_args->in_local_queue->queries.emplace_back();
 			m_args->make_new = false;
 		}
-		ZmqQuery& msg_buf = m_args->in_local_queue.back().queries;
-		msg_buf.resize(4);
+		ZmqQuery& msg_buf = m_args->in_local_queue->queries.back();
+		msg_buf.parts.resize(4);
 		// received parts are [client, topic, msg_id, query]
 		// reorder parts on receipt as client and msg_id will be left untouched and re-used for response
 		static constexpr char part_order[4] = {0,2,1,3};
 		
-		std::unique_lock<std::mutex> locker(m_args->socket_mtx);
-		for(m_args->msg_parts=0; m_args->msg_parts<4; ++m_args->msg_parts){
-			m_args->get_ok = m_args->socket->recv(&msg_buf[part_order[m_args->msg_parts]]);
-			if(!m_args->get_ok || !msg_buf[part_order[m_args->msg_parts]].more()) break;
-		}
-		
-		// if there are more than 4 parts, read the remainder to flush the buffer, but discard the message
-		if(m_args->get_ok && msg_buf[3].more()){
-			while(true){
-				m_args->socket->recv(&m_args->msg_discard);
-				++m_args->msg_parts;
+		try {
+			
+			std::unique_lock<std::mutex> locker(*m_args->socket_mtx);
+			for(m_args->msg_parts=0; m_args->msg_parts<4; ++m_args->msg_parts){
+				m_args->get_ok = m_args->socket->recv(&msg_buf[part_order[m_args->msg_parts]]);
+				if(!m_args->get_ok || !msg_buf[part_order[m_args->msg_parts]].more()) break;
 			}
+			locker.unlock();
+			
+			// if there are more than 4 parts, read the remainder to flush the buffer, but discard the message
+			if(m_args->get_ok && msg_buf[3].more()){
+				while(true){
+					m_args->socket->recv(&m_args->msg_discard);
+					++m_args->msg_parts;
+				}
+			}
+			
+			// if the read failed, discard the message
+			if(!m_args->get_ok){
+				
+				std::cerr<<m_args->m_tool_name<<" receive failed with "<<zmq_strerror(errno)<<std::endl;
+				++(m_args->monitoring_vars->rcv_fails);
+				
+			// if there weren't 4 parts, discard the message
+			} else if(m_args->msg_parts!=4){
+				
+				std::cerr<<m_args->m_tool_name<<": Unexpected "<<m_args->msg_parts<<" part message"<<std::endl;
+				// FIXME print other info we have (client, message, parts) to help identify culprit
+				// FIXME do we do this? for efficiency? here? do we add a flag for bad and do it in the processing?
+				// FIXME do we try to make a query out of the first 4 parts? i'm gonna say no, for now
+				++(m_args->monitoring_vars->bad_msgs);
+				
+			// else success
+			} else {
+				
+				m_args->make_new=true;
+				++(m_args->monitoring_vars->msgs_rcvd);
+				
+			}
+			
+		} catch(zmq::error_t& err){
+			// receive aborted due to signals?
+			if(zmq_errno()==EINTR) return; // FIXME this is probably not appropriate: should resume receive?
+			std::cerr<<m_args->m_tool_name<<" receive caught "<<err.what()<<std::endl;
+			++(m_args->monitoring_vars->rcv_fails);
+//			m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
+		} catch(std::exception& err){
+			std::cerr<<m_args->m_tool_name<<" receive caught "<<err.what()<<std::endl;
+			++(m_args->monitoring_vars->rcv_fails);
+//			m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
+		} catch(...){
+			std::cerr<<m_args->m_tool_name<<" receive caught "<<strerror(errno)<<std::endl;
+			++(m_args->monitoring_vars->rcv_fails);
+//			m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 		}
-		locker.unlock();
-		
-		// if the read failed, discard the message
-		if(!m_args->get_ok){
-			std::cerr<<m_tool_name<<": Error receiving message part "<<m_args->msg_parts<<std::endl; // FIXME better logging
-			++(*m_args->m_data->readrep_rcv_fails);
-			return;
-		}
-		
-		// if there weren't 4 parts, discard the message
-		if(m_args->msg_parts!=4){
-			std::cerr<<m_tool_name<<": Unexpected "<<m_args->msg_parts<<" part message"<<std::endl;
-			// FIXME print other info we have (client, message, parts) to help identify culprit
-			// FIXME do we do this? for efficiency? here? do we add a flag for bad and do it in the processing?
-			// FIXME do we try to make a query out of the first 4 parts? i'm gonna say no, for now
-			++(*m_args->m_data->readrep_bad_msgs);
-			return;
-		}
-		
-		// else success
-		m_args->make_new=true;
-		++(*m_args->m_data->readrep_msgs_rcvd);
 		
 	} // else no messages from clients
 	
 	// write
 	// =====
-	m_args->m_data->Log("Size of reply queue is "+
-	    (m_args->out_local_queue ? std::to_string(m_args->out_local_queue.size()) : std::string{"0"}),10); // FIXME
+	//m_args->m_data->Log("Size of reply queue is "+
+	//    (m_args->out_local_queue ? std::to_string(m_args->out_local_queue.size()) : std::string{"0"}),10); // FIXME
 	
 	// send next response message, if we have one in the queue
-	if(!m_args->out_local_queue!=nullptr && m_args->out_i<m_args->out_local_queue->queries.size()){
+	if(m_args->out_local_queue!=nullptr && m_args->out_i<m_args->out_local_queue->queries.size()){
 		
 		// check we had a listener ready
 		if(m_args->polls[1].revents & ZMQ_POLLOUT){
+			
+			std::clog<<m_args->m_tool_name<<" sending reply"<<std::endl; // FIXME better logging
 			
 			ZmqQuery& rep = m_args->out_local_queue->queries[m_args->out_i++];
 			// FIXME maybe don't pop (increment out_i) until send succeeds?
 			// FIXME maybe impelement 'retries' mechanism as previously?
 			
-			std::unique_lock<std::mutex> locker(m_args->socket_mtx);
 			try {
+				
+				std::unique_lock<std::mutex> locker(*m_args->socket_mtx);
 				for(size_t i=0; i<rep.size()-1; ++i){
 						m_args->get_ok = m_args->socket->send(rep[i], ZMQ_SNDMORE);
 						if(!m_args->get_ok) break;
 				}
 				if(m_args->get_ok) m_args->get_ok = m_args->socket->send(rep[rep.size()-1]);
-			} catch(zmq::exception_t& e){
-				std::cerr<<m_tool_name<<": Error sending reply '"<<e.what()<<std::endl;
-				break;
-			}
-			locker.unlock();
-			
-			if(m_args->get_ok){
-				// remove from the to-send queue
-				++(*m_args->m_data->readrep_reps_sent);
-				//m_args->out_local_queue.pop_front();  // FIXME if we didn't do it before
+				locker.unlock();
 				
-			} else {
-				std::cerr<<m_tool_name<<": error sending acknowledgement message!"<<std::endl; // FIXME
-				++(*m_args->m_data->readrep_rep_send_fails); // FIXME or move into below if we retry? or track both?
-				/*
-				if(next_msg.retries>=max_send_attempts){
-					resp_queue.erase(resp_queue.begin()->first);
-				} else {
-					++next_msg.retries;
+				if(!m_args->get_ok){
+					std::cerr<<m_args->m_tool_name<<": send failed with "<<zmq_strerror(errno)<<std::endl;
+					++(m_args->monitoring_vars->send_fails); // FIXME or move into below if we retry? or track both?
+					/*
+					if(next_msg.retries>=max_send_attempts){
+						resp_queue.erase(resp_queue.begin()->first);
+					} else {
+						++next_msg.retries;
+					}
+					*/
+					return;
 				}
-				*/
+				
+				// else success
+				++(m_args->monitoring_vars->msgs_sent);
+				
+			} catch(zmq::error_t& err){
+				// send aborted due to signals?
+				if(zmq_errno()==EINTR) return; // FIXME is this appropriate here?
+				std::cerr<<m_args->m_tool_name<<" send caught "<<err.what()<<std::endl; // FIXME better logging
+				++(m_args->monitoring_vars->send_fails);
+//				m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
+			} catch(std::exception& e){
+				std::cerr<<m_args->m_tool_name<<" send caught "<<e.what()<<std::endl;
+				++(m_args->monitoring_vars->send_fails);
+//				m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
+			} catch(...){
+				std::cerr<<m_args->m_tool_name<<" send caught "<<strerror(errno)<<std::endl;
+				++(m_args->monitoring_vars->send_fails);
+//				m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 			}
 			
 		} // else no available listeners
@@ -301,6 +347,8 @@ void ReadReceiverReplySender::Thread(Thread_args* args){
 		// no responses to send - see if there's any in the DataModel
 		std::unique_lock<std::mutex> locker(m_args->m_data->query_replies_mtx);
 		if(!m_args->m_data->query_replies.empty()){
+			
+			std::clog<<m_args->m_tool_name<<": fetching new replies"<<std::endl;
 			
 			// return our batch to the pool if applicable
 			if(m_args->out_local_queue!=nullptr){
@@ -312,15 +360,14 @@ void ReadReceiverReplySender::Thread(Thread_args* args){
 			m_args->out_local_queue = m_args->m_data->query_replies.front();
 			m_args->m_data->query_replies.pop_front();
 			
-			*(m_args->m_data->readrep_out_buffer_transfers;
+			++(m_args->monitoring_vars->out_buffer_transfers);
 			
 			// start sending from the beginning
 			m_args->out_i=0;
 		}
 		locker.unlock();
 		
-		
 	}
 	
-	return true;
+	return;
 }

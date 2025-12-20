@@ -16,7 +16,6 @@ bool JobManager::Initialise(std::string configfile, DataModel &data){
 	m_data->num_threads=0; // tracker
 	worker_pool_manager= new WorkerPoolManager(m_data->job_queue, &m_thread_cap, &(m_data->thread_cap), &(m_data->num_threads), nullptr, self_serving);
 	
-	// FIXME add to other Tools
 	ExportConfiguration();
 	
 	return true;
@@ -65,7 +64,7 @@ void JobManager::LoadConfig(){
 	if(!m_variables.Get("verbose",m_verbose)) m_verbose=1;
 	if(!m_variables.Get("thread_cap",m_thread_cap)) m_thread_cap = double(std::thread::hardware_concurrency())*0.8;
 	if(!m_variables.Get("global_thread_cap",m_data->thread_cap)) m_data->thread_cap = m_thread_cap;
-	if(!m_variables.Get("self_serving", self_serving) self_serving = true;
+	if(!m_variables.Get("self_serving", self_serving)) self_serving = true;
 	return;
 }
 
