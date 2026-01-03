@@ -25,7 +25,10 @@ bool Monitoring::Initialise(std::string configfile, DataModel &data){
 	thread_args.last_send = std::chrono::steady_clock::now();
 	thread_args.m_data = m_data;
 	thread_args.monitoring_vars = &monitoring_vars;
-	m_data->utils.CreateThread("monitoring", &Thread, &thread_args); // thread needs a unique name
+	if(!m_data->utils.CreateThread("monitoring", &Thread, &thread_args)){
+		Log(m_tool_name+": Failed to spawn background thread",v_error,m_verbose);
+		return false;
+	}
 	m_data->num_threads++;
 	
 	//m_data->services->AddService("middleman", 5000); // is this needed? what for??
@@ -74,7 +77,7 @@ void Monitoring::Thread(Thread_args* args){
 		
 		for(std::pair<const std::string, MonitoringVariables*>& mon : m_args->m_data->monitoring_variables){
 			
-			std::string s="{\"time\":0, \"device\":\"middleman\",\"subject\":\""+mon.first+"\", \"data\":"+mon.second->toJSON()+"}";
+			std::string s="{\"time\":0, \"device\":\"middleman\",\"subject\":\""+mon.first+"\", \"data\":"+mon.second->GetJson()+"}";
 			
 			std::unique_lock<std::mutex> locker(m_args->m_data->out_mon_msg_queue_mtx);
 			m_args->m_data->out_mon_msg_queue.push_back(s);

@@ -20,7 +20,10 @@ bool WriteWorkers::Initialise(std::string configfile, DataModel &data){
 	
 	thread_args.m_data = m_data;
 	thread_args.monitoring_vars = &monitoring_vars;
-	m_data->utils.CreateThread("write_job_distributor", &Thread, &thread_args);
+	if(!m_data->utils.CreateThread("write_job_distributor", &Thread, &thread_args)){
+		Log(m_tool_name+": Failed to spawn background thread",v_error,m_verbose);
+		return false;
+	}
 	m_data->num_threads++;
 	
 	return true;
@@ -93,6 +96,7 @@ void WriteWorkers::Thread(Thread_args* args){
 		job_data->local_msg_queue = m_args->local_msg_queue[i];
 		job_data->m_job_name = "write_worker";
 		
+		printf("spawning %s job\n", job_data->m_job_name.c_str());
 		the_job->func = WriteMessageJob;
 		the_job->fail_func = WriteMessageFail;
 		
@@ -144,6 +148,8 @@ bool WriteWorkers::WriteMessageJob(void*& arg){
 	
 	WriteJobStruct* m_args = static_cast<WriteJobStruct*>(arg);
 	
+	printf("%s job processing %d queries\n", m_args->m_job_name.c_str(), m_args->local_msg_queue->queries.size());
+	
 	m_args->local_msg_queue->reset();
 	
 	// pull next query from batch
@@ -181,7 +187,7 @@ bool WriteWorkers::WriteMessageJob(void*& arg){
 				m_args->out_buffer = &m_args->local_msg_queue->plotlyplot_buffer;
 				break;
 			case query_topic::rootplot:
-				m_args->out_buffer = &m_args->local_msg_queue->rooplot_buffer;
+				m_args->out_buffer = &m_args->local_msg_queue->rootplot_buffer;
 				break;
 			case query_topic::generic:
 				// these can't be buffered, just note their indices for the DB workers
@@ -189,7 +195,7 @@ bool WriteWorkers::WriteMessageJob(void*& arg){
 				continue;
 				break;
 			default:
-				//std::cerr<<"unrecognised topic"<<std::endl;
+				std::cerr<<"unrecognised topic '"<<query.topic()<<"'"<<std::endl;
 				// FIXME unrecognised topic log it.
 				break;
 		}
@@ -201,12 +207,15 @@ bool WriteWorkers::WriteMessageJob(void*& arg){
 		
 	}
 	
+	// add closing ']' to any batch queries
+	m_args->local_msg_queue->close();
+	
 	// pass the batch onto the next stage of the pipeline for the DatabaseWorkers
 	std::unique_lock<std::mutex> locker(m_args->m_data->write_query_queue_mtx);
 	m_args->m_data->write_query_queue.push_back(m_args->local_msg_queue);
 	locker.unlock();
 	
-	std::cerr<<m_args->m_job_name<<" completed"<<std::endl;
+	printf("%s queueing processed querybatch\n",m_args->m_job_name.c_str());
 	++(m_args->monitoring_vars->jobs_completed);
 	
 	// return our job args to the pool

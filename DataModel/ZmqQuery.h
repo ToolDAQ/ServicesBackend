@@ -28,6 +28,7 @@ struct ZmqQuery {
 	// pub socket: topic, client, msgnum, query
 	// router socket: client, topic, msgnum, query
 	// replies: client, msgnum, success, results (if present)...
+	// if success is false, results are 1-part with an error message
 	
 	zmq::message_t& operator[](int i){
 		return parts[i];
@@ -51,21 +52,29 @@ struct ZmqQuery {
 	void setsuccess(uint32_t succeeded){
 		//zmq_msg_init_size(&parts[2],sizeof(uint32_t)); // this is from underlying c api... mismatch zmq_msg_t* / zmq::message_t
 		new(&parts[2]) zmq::message_t(sizeof(uint32_t)); // FIXME is there a better way to call zmq_msg_init_size?
-		memcpy((void*)parts[2].data(),&succeeded,sizeof(uint32_t));
+		memcpy((void*)parts[2].data(),&succeeded,sizeof(uint32_t)); // FIXME make bool instead of uint32_t?
 		return;
 	}
 	
 	// for read queries, returned directly from pqxx, decoded later
 	pqxx::result result;
+	std::string err;
+	
+	void Clear(){
+		result.clear();
+		err.clear();
+	}
 	
 	// for setting responses of read queries
 	void setresponserows(size_t n_rows){
+		printf("ZmqQuery at %p set to %lu response rows\n",this, n_rows);
 		parts.resize(3+n_rows);
 		return;
 	}
 	
 	void setresponse(size_t row_num, std::string_view val){
 		//zmq_msg_init_size(&parts[row_num+3],row.size()); // mismatch zmq_msg_t* / zmq::message_t
+		printf("response part %lu set to %s on ZmqQuery at %p\n", row_num, val.data(), this);
 		new(&parts[row_num+3]) zmq::message_t(val.size()); // FIXME better way to call zmq_msg_init_size
 		memcpy((void*)parts[row_num+3].data(),val.data(),val.size());
 		return;
@@ -75,6 +84,12 @@ struct ZmqQuery {
 	typename std::enable_if<std::is_fundamental<T>::value, void>::type
 	setresponse(size_t row_num, T val){
 		//zmq_msg_init_size(&parts[row_num+3],row.size()); // mismatch zmq_msg_t* / zmq::message_t
+		
+		// what a mess. but only printf bypasses our great overlord's wonderful logging decorations
+		std::ostringstream oss;
+		oss << val;
+		printf("response part %lu set to %s on ZmqQuery at %p\n", row_num, oss.str().c_str(), this);
+		
 		new(&parts[row_num+3]) zmq::message_t(sizeof(val)); // FIXME better way to call zmq_msg_init_size
 		memcpy((void*)parts[row_num+3].data(),&val,sizeof(val));
 		return;

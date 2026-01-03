@@ -33,6 +33,9 @@ struct DatabaseJobStruct {
 	std::vector<std::string> rootplot_queue;
 	std::vector<std::string> plotlyplot_queue;
 	
+	std::vector<pqxx::pipeline::query_id> ids;
+	bool pipeline_error;
+	
 	void clear(){
 		read_queue.clear();
 		write_queue.clear();

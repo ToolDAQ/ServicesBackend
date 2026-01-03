@@ -56,7 +56,7 @@ class ReadQueryReceiverReplySender: public Tool {
 	ReadQueryReceiverReplySender_args thread_args;
 	ReadReceiveMonitoring monitoring_vars;
 	
-	std::string port_name; // name by which clients advertise sockets for sending read queries to the DB
+	std::string remote_port_name; // name by which clients advertise sockets for sending read queries to the DB
 	
 };
 

@@ -4,6 +4,6 @@ rcv_hwm 10000
 conns_backlog 30000
 rcv_timeout_ms 10
 poll_timeout_ms 10
-transfer_period_ms 200
 local_buffer_size 200
+transfer_period_ms 200
 #am_master 1

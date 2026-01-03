@@ -16,7 +16,7 @@ bool ReadQueryReceiverReplySender::Initialise(std::string configfile, DataModel 
 	/*               Configuration               */
 	/* ----------------------------------------- */
 	
-	port_name = "db_read";
+	remote_port_name = "db_read";
 	// FIXME do these timeouts need to be << transfer_period_ms?
 	int rcv_timeout_ms=500;
 	int snd_timeout_ms=500;
@@ -26,7 +26,7 @@ bool ReadQueryReceiverReplySender::Initialise(std::string configfile, DataModel 
 	int local_buffer_size = 200;
 	int transfer_period_ms = 200;
 	
-	m_variables.Get("port_name", port_name);
+	m_variables.Get("remote_port_name", remote_port_name);
 	m_variables.Get("rcv_hwm", rcv_hwm); // max num outstanding messages in receive buffer
 	m_variables.Get("conns_backlog", conns_backlog); // max num oustanding connection requests
 	m_variables.Get("poll_timeout_ms",poll_timeout_ms);
@@ -47,7 +47,7 @@ bool ReadQueryReceiverReplySender::Initialise(std::string configfile, DataModel 
 	
 	ManagedSocket* managed_socket = new ManagedSocket;
 	managed_socket->service_name=""; // attach to any client type...
-	managed_socket->port_name = port_name; // ...that advertises a service on port 'port_name'
+	managed_socket->remote_port_name = remote_port_name; // ...that advertises a service on port 'remote_port_name'
 	managed_socket->socket = new zmq::socket_t(*m_data->context, ZMQ_ROUTER);
 	managed_socket->socket->setsockopt(ZMQ_SNDTIMEO, snd_timeout_ms);
 	managed_socket->socket->setsockopt(ZMQ_RCVTIMEO, rcv_timeout_ms);
@@ -70,7 +70,7 @@ bool ReadQueryReceiverReplySender::Initialise(std::string configfile, DataModel 
 	
 	// add the socket to the datamodel for the SocketManager, which will handle making new connections to clients
 	std::unique_lock<std::mutex> locker(m_data->managed_sockets_mtx);
-	m_data->managed_sockets[port_name] = managed_socket;
+	m_data->managed_sockets[remote_port_name] = managed_socket;
 	
 	/* ----------------------------------------- */
 	/*               Thread Setup                */
@@ -92,8 +92,13 @@ bool ReadQueryReceiverReplySender::Initialise(std::string configfile, DataModel 
 	thread_args.make_new = true;
 	thread_args.local_buffer_size = local_buffer_size;
 	thread_args.transfer_period_ms = std::chrono::milliseconds{transfer_period_ms};
+	thread_args.last_transfer = std::chrono::steady_clock::now();
 	
-	m_data->utils.CreateThread("readrep_sendreceiver", &Thread, &thread_args); // thread needs a unique name
+	// thread needs a unique name
+	if(!m_data->utils.CreateThread("readrep_sendreceiver", &Thread, &thread_args)){
+		Log(m_tool_name+": Failed to spawn background thread",v_error,m_verbose);
+		return false;
+	}
 	m_data->num_threads++;
 	
 	return true;
@@ -130,10 +135,10 @@ bool ReadQueryReceiverReplySender::Finalise(){
 	}
 	*/
 	
-	if(m_data->managed_sockets.count(port_name)){
+	if(m_data->managed_sockets.count(remote_port_name)){
 		std::unique_lock<std::mutex> locker(m_data->managed_sockets_mtx);
-		ManagedSocket* sock = m_data->managed_sockets[port_name];
-		m_data->managed_sockets.erase(port_name);
+		ManagedSocket* sock = m_data->managed_sockets[remote_port_name];
+		m_data->managed_sockets.erase(remote_port_name);
 		locker.unlock();
 		if(sock->socket) delete sock->socket; // destructor closes socket
 		delete sock;
@@ -155,13 +160,13 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 	// transfer to datamodel
 	// =====================
 	if(m_args->in_local_queue->queries.size() >= m_args->local_buffer_size ||
-	  (m_args->last_transfer - std::chrono::steady_clock::now()) > m_args->transfer_period_ms){
+	  (std::chrono::steady_clock::now() - m_args->last_transfer) > m_args->transfer_period_ms){
 		
-		if(!m_args->make_new) m_args->in_local_queue->queries.pop_back();
 		if(!m_args->in_local_queue->queries.empty()){
 			
-			std::clog<<m_args->m_tool_name<<": added "<<m_args->in_local_queue->queries.size()
-			         <<" messages to datamodel"<<std::endl;
+			if(!m_args->make_new) m_args->in_local_queue->queries.pop_back();
+			
+			printf("%s adding %ld messages to datamodel\n",m_args->m_tool_name.c_str(),m_args->in_local_queue->queries.size());
 			
 			std::unique_lock<std::mutex> locker(m_args->m_data->read_msg_queue_mtx);
 			m_args->m_data->read_msg_queue.push_back(m_args->in_local_queue);
@@ -169,11 +174,13 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 			
 			m_args->in_local_queue = m_args->m_data->querybatch_pool.GetNew(m_args->local_buffer_size);
 			
-			m_args->last_transfer = std::chrono::steady_clock::now();
 			m_args->make_new=true;
 			++(m_args->monitoring_vars->in_buffer_transfers);
 			
 		}
+		
+		m_args->last_transfer = std::chrono::steady_clock::now();
+		
 	}
 	
 	// poll
@@ -211,7 +218,7 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 	// read
 	// ====
 	if(m_args->polls[0].revents & ZMQ_POLLIN){
-		std::clog<<m_args->m_tool_name<<" receiving message"<<std::endl;
+		printf("%s receiving message\n",m_args->m_tool_name.c_str());
 		
 		if(m_args->make_new){
 			m_args->in_local_queue->queries.emplace_back();
@@ -222,23 +229,18 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 		// received parts are [client, topic, msg_id, query]
 		// reorder parts on receipt as client and msg_id will be left untouched and re-used for response
 		static constexpr char part_order[4] = {0,2,1,3};
+		m_args->msg_parts=0;
 		
 		try {
 			
 			std::unique_lock<std::mutex> locker(*m_args->socket_mtx);
-			for(m_args->msg_parts=0; m_args->msg_parts<4; ++m_args->msg_parts){
-				m_args->get_ok = m_args->socket->recv(&msg_buf[part_order[m_args->msg_parts]]);
-				if(!m_args->get_ok || !msg_buf[part_order[m_args->msg_parts]].more()) break;
-			}
+			printf("%s receiving part...",m_args->m_tool_name.c_str());
+			do {
+				m_args->get_ok = m_args->socket->recv(&msg_buf[part_order[std::min(3,m_args->msg_parts++)]]);
+				printf("%d=%d (more: %d),...",m_args->msg_parts,m_args->get_ok,msg_buf[part_order[std::min(3,m_args->msg_parts-1)]].more());
+			} while(m_args->get_ok && msg_buf[part_order[std::min(3,m_args->msg_parts-1)]].more());
 			locker.unlock();
-			
-			// if there are more than 4 parts, read the remainder to flush the buffer, but discard the message
-			if(m_args->get_ok && msg_buf[3].more()){
-				while(true){
-					m_args->socket->recv(&m_args->msg_discard);
-					++m_args->msg_parts;
-				}
-			}
+			printf("\n");
 			
 			// if the read failed, discard the message
 			if(!m_args->get_ok){
@@ -250,6 +252,11 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 			} else if(m_args->msg_parts!=4){
 				
 				std::cerr<<m_args->m_tool_name<<": Unexpected "<<m_args->msg_parts<<" part message"<<std::endl;
+				for(int i=0; i<m_args->msg_parts; ++i){
+					char msg_str[msg_buf[part_order[i]].size()];
+					snprintf(&msg_str[0], msg_buf[part_order[i]].size()+1, "%s", msg_buf[part_order[i]].data());
+					printf("\tpart %d: %s\n",i, msg_str);
+				}
 				// FIXME print other info we have (client, message, parts) to help identify culprit
 				// FIXME do we do this? for efficiency? here? do we add a flag for bad and do it in the processing?
 				// FIXME do we try to make a query out of the first 4 parts? i'm gonna say no, for now
@@ -260,6 +267,7 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 				
 				m_args->make_new=true;
 				++(m_args->monitoring_vars->msgs_rcvd);
+				printf("%s received query %u, '%s' message '%s' into ZmqQuery at %p, %p\n",m_args->m_tool_name.c_str(), msg_buf.msg_id(), msg_buf.topic().data(), msg_buf.msg().data(), &msg_buf, &msg_buf.parts[3]);
 				
 			}
 			
@@ -292,11 +300,12 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 		// check we had a listener ready
 		if(m_args->polls[1].revents & ZMQ_POLLOUT){
 			
-			std::clog<<m_args->m_tool_name<<" sending reply"<<std::endl; // FIXME better logging
+			printf("%s sending reply %d/%d\n",m_args->m_tool_name.c_str(),m_args->out_i,m_args->out_local_queue->queries.size()); // FIXME better logging
 			
 			ZmqQuery& rep = m_args->out_local_queue->queries[m_args->out_i++];
 			// FIXME maybe don't pop (increment out_i) until send succeeds?
 			// FIXME maybe impelement 'retries' mechanism as previously?
+			printf("reply to message %u has %d parts\n", rep.msg_id(), rep.size());
 			
 			try {
 				
@@ -320,8 +329,11 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 					*/
 					return;
 				}
+				// FIXME if we do implement re-sending, then do not do this
+				rep.parts.resize(0); // safety to prevent accidentally accessing sent messages, which can segfault
 				
 				// else success
+				printf("%s reply at %p sent\n",m_args->m_tool_name.c_str(), &rep);
 				++(m_args->monitoring_vars->msgs_sent);
 				
 			} catch(zmq::error_t& err){
@@ -348,10 +360,11 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 		std::unique_lock<std::mutex> locker(m_args->m_data->query_replies_mtx);
 		if(!m_args->m_data->query_replies.empty()){
 			
-			std::clog<<m_args->m_tool_name<<": fetching new replies"<<std::endl;
+			printf("%s fetching new replies\n",m_args->m_tool_name.c_str());
 			
 			// return our batch to the pool if applicable
 			if(m_args->out_local_queue!=nullptr){
+				m_args->out_local_queue->queries.clear();
 				m_args->m_data->querybatch_pool.Add(m_args->out_local_queue);
 				m_args->out_local_queue = nullptr;
 			}

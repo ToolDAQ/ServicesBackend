@@ -60,7 +60,10 @@ bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 	thread_args.m_data = m_data;
 	thread_args.monitoring_vars = &monitoring_vars;
 	thread_args.job_queue = &database_jobqueue;
-	m_data->utils.CreateThread("database_job_distributor", &Thread, &thread_args);
+	if(!m_data->utils.CreateThread("database_job_distributor", &Thread, &thread_args)){
+		Log(m_tool_name+": Failed to spawn background thread",v_error,m_verbose);
+		return false;
+	}
 	m_data->num_threads++;
 	
 	/* ----------------------------------------- */
@@ -97,7 +100,7 @@ bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 		return false;
 	}
 	catch (std::exception const &e){
-		std::cerr << e.what() << std::endl; // FIXME cerr -> Log
+		std::cerr << current_exception_name()<<": "<<e.what() << std::endl; // FIXME cerr -> Log
 		return false;
 	}
 	
@@ -185,6 +188,7 @@ void DatabaseWorkers::Thread(Thread_args* args){
 	std::unique_lock<std::mutex> locker(m_args->m_data->log_query_queue_mtx);
 	if(!m_args->m_data->log_query_queue.empty()){
 		std::swap(m_args->m_data->log_query_queue, job_data->logging_queue);
+		printf("DbJobDistributor grabbed %d log batches\n",job_data->logging_queue.size());
 	}
 	
 	// grab monitoring queries
@@ -203,18 +207,20 @@ void DatabaseWorkers::Thread(Thread_args* args){
 	locker = std::unique_lock<std::mutex>(m_args->m_data->plotlyplot_query_queue_mtx);
 	if(!m_args->m_data->plotlyplot_query_queue.empty()){
 		std::swap(m_args->m_data->plotlyplot_query_queue, job_data->plotlyplot_queue);
+	}
 	
 	// grab write queries
 	locker = std::unique_lock<std::mutex>(m_args->m_data->write_query_queue_mtx);
 	if(!m_args->m_data->write_query_queue.empty()){
 		std::swap(m_args->m_data->write_query_queue, job_data->write_queue);
+		printf("DbJobDistributor grabbed %d write query batches\n",job_data->write_queue.size());
 	}
 	
 	// grab read queries
 	locker = std::unique_lock<std::mutex>(m_args->m_data->read_msg_queue_mtx);
 	if(!m_args->m_data->read_msg_queue.empty()){
 		std::swap(m_args->m_data->read_msg_queue, job_data->read_queue);
-	}
+		printf("DbJobDistributor grabbed %d read query batches\n",job_data->read_queue.size());
 	}
 	
 	locker.unlock();
@@ -227,6 +233,7 @@ void DatabaseWorkers::Thread(Thread_args* args){
 	   job_data->write_queue.empty() &&
 	   job_data->read_queue.empty()) return;
 	
+	printf("DbJobDistributor making db job!\n");
 	job_data->m_job_name = "database_worker";
 	
 	m_args->job_queue->AddJob(m_args->the_job);
@@ -262,7 +269,8 @@ void DatabaseWorkers::DatabaseJobFail(void*& arg){
 	//m_args->m_data->query_buffer_pool.Add(m_args->msg_buffer);  << FIXME not back to the pool but reply queue
 	
 	//query.result.clear(); // to clear/release bad results...
-	// ideally we want to pass back an error or what happened to the client?
+	// ideally we want to pass back an error or what happened to the client (set query.err)
+	//query.err = ??? but what was the problem?
 	
 	DatabaseJobStruct* m_args=static_cast<DatabaseJobStruct*>(arg);
 	std::cerr<<m_args->m_job_name<<" failure"<<std::endl;
@@ -281,6 +289,7 @@ void DatabaseWorkers::DatabaseJobFail(void*& arg){
 bool DatabaseWorkers::DatabaseJob(void*& arg){
 	
 	DatabaseJobStruct* m_args = static_cast<DatabaseJobStruct*>(arg);
+	printf("DB worker starting!\n");
 	
 	// the worker will need a connection to the database
 	thread_local std::unique_ptr<pqxx::connection> conn;
@@ -299,73 +308,110 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 			// alarms insert
 			conn->prepare("alarms_insert", "INSERT INTO alarms ( time, device, level, alarm ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, level int, alarm text)");
 			// rootplot insert
-			conn->prepare("rootplots_insert", "INSERT INTO rootplots ( time, name, data, draw_options ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, data jsonb, draw_options text)");
+			conn->prepare("rootplots_insert", "INSERT INTO rootplots ( time, name, data, draw_options, lifetime ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, data jsonb, draw_options text, lifetime int) returning version");
 			// plotlyplot insert
-			conn->prepare("plotlyplots_insert", "INSERT INTO plotlyplots ( time, name, data, layout ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, data jsonb, layout jsonb)");
+			conn->prepare("plotlyplots_insert", "INSERT INTO plotlyplots ( time, name, data, layout, lifetime ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, data jsonb, layout jsonb, lifetime int) returning version");
 			// calibration insert
-			conn->prepare("calibration_insert", "INSERT INTO calibration ( time, name, severity, message ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, description text, data jsonb)");
+			conn->prepare("calibration_insert", "INSERT INTO calibration ( time, name, description, data ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, description text, data jsonb) returning version");
 			// device config insert
-			conn->prepare("device_config_insert", "INSERT INTO device_config ( time, device, author, description, data ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, author text, description text, data jsonb)");
+			conn->prepare("device_config_insert", "INSERT INTO device_config ( time, device, author, description, data ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, author text, description text, data jsonb) returning version");
 			// run config insert
-			conn->prepare("run_config_insert", "INSERT INTO run_config ( time, name, author, description, data ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, author text, description text, data jsonb)");
+			conn->prepare("run_config_insert", "INSERT INTO run_config ( time, name, author, description, data ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, author text, description text, data jsonb) returning config_id");
 		}
 	}
 	
 	// FIXME if the DB goes down, implement some sort of pausing(?) or local recording to local disk (SQLite?)
 	
 	// we also use a single transaction for all queries, so open that now
-	pqxx::work tx(*conn.get()); // aka pqxx::transaction<>
+	pqxx::work* tx = new pqxx::work(*conn.get()); // aka pqxx::transaction<>
+//	pqxx::substransaction sub(tx); // aka create savepoint and rollback on error. possibly harmful for performance...
+	
+	// ok, so the problem with this is any query that fails within a transaction subsequently throws:
+	// 'current transaction is aborted, commands ignored until end of transaction block'
+	// for any further use, so we need to handle that.
 	
 	// insert new logging statements
-	try {
-		tx.exec(pqxx::prepped{"logging_insert"}, pqxx::params{m_args->logging_queue});
-		++(m_args->monitoring_vars->logging_submissions);
-	} catch (std::exception& e){
-		++(m_args->monitoring_vars->logging_submissions_failed);
-		// FIXME log the error here
-		// FIXME if we catch (pqxx::sql_error const &e) or others can we get better information?
+	printf("calling prepped for %d logging batches\n",m_args->logging_queue.size());
+	for(std::string& batch : m_args->logging_queue){
+		printf("dbworker inserting logging batch: '%s'\n",batch.c_str());
+		try {
+			tx->exec(pqxx::prepped{"logging_insert"}, pqxx::params{batch});
+			++(m_args->monitoring_vars->logging_submissions);
+		} catch (std::exception& e){
+			std::cerr<<"dbworker log insert failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
+			++(m_args->monitoring_vars->logging_submissions_failed);
+			// FIXME log the error here
+			// FIXME if we catch (pqxx::sql_error const &e) or others can we get better information?
+			// after error the transaction becomes unusable, and we must open a new one
+			delete tx;
+			tx = new pqxx::work(*conn.get());
+		}
 	}
 	
 	// insert new monitoring statements
-	try {
-		tx.exec(pqxx::prepped{"monitoring_insert"}, pqxx::params{m_args->monitoring_queue});
-		++(m_args->monitoring_vars->monitoring_submissions);
-	} catch (std::exception& e){
-		++(m_args->monitoring_vars->monitoring_submissions_failed);
-		// FIXME log the error here
+	printf("calling prepped for %d monitoring batches\n",m_args->monitoring_queue.size());
+	for(std::string& batch : m_args->monitoring_queue){
+		try {
+			tx->exec(pqxx::prepped{"monitoring_insert"}, pqxx::params{batch});
+			++(m_args->monitoring_vars->monitoring_submissions);
+		} catch (std::exception& e){
+			++(m_args->monitoring_vars->monitoring_submissions_failed);
+			std::cerr<<"dbworker mon insert failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
+			// FIXME log the error here
+			delete tx;
+			tx = new pqxx::work(*conn.get());
+		}
 	}
 	
 	// insert new multicast rootplot statements
-	try {
-		tx.exec(pqxx::prepped{"rootplots_insert"}, pqxx::params{m_args->rootplot_queue});
-		++(m_args->monitoring_vars->rootplot_submissions);
-	} catch (std::exception& e){
-		++(m_args->monitoring_vars->rootplot_submissions_failed);
-		// FIXME log the error here
+	printf("calling prepped for %d rootplot batches\n",m_args->rootplot_queue.size());
+	for(std::string& batch : m_args->rootplot_queue){
+		try {
+			tx->exec(pqxx::prepped{"rootplots_insert"}, pqxx::params{batch});
+			++(m_args->monitoring_vars->rootplot_submissions);
+		} catch (std::exception& e){
+			++(m_args->monitoring_vars->rootplot_submissions_failed);
+			std::cerr<<"dbworker rootplot insert failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
+			// FIXME log the error here
+			delete tx;
+			tx = new pqxx::work(*conn.get());
+		}
 	}
 	
 	// insert new multicast plotlyplot statements
-	try {
-		tx.exec(pqxx::prepped{"plotlyplots_insert"}, pqxx::params{m_args->plotlyplot_queue});
-		++(m_args->monitoring_vars->plotlyplot_submissions);
-	} catch (std::exception& e){
-		++(m_args->monitoring_vars->plotlyplot_submissions_failed);
-		// FIXME log the error here
+	printf("calling prepped for %d plotlyplot batches\n",m_args->plotlyplot_queue.size());
+	for(std::string& batch : m_args->plotlyplot_queue){
+		try {
+			tx->exec(pqxx::prepped{"plotlyplots_insert"}, pqxx::params{batch});
+			++(m_args->monitoring_vars->plotlyplot_submissions);
+		} catch (std::exception& e){
+			++(m_args->monitoring_vars->plotlyplot_submissions_failed);
+			std::cerr<<"dbworker plotlyplot insert failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
+			// FIXME log the error here
+			delete tx;
+			tx = new pqxx::work(*conn.get());
+		}
 	}
 	
 	// write queries
+	printf("processing %d write batches\n",m_args->write_queue.size());
 	for(QueryBatch* batch : m_args->write_queue){
 		// the batch gets split up by WriteWorkers into a buffer for each type of write query
 		
 		// alarm insertions return nothing, just catch errors
-		try {
-			tx.exec(pqxx::prepped{"alarms_insert"}, pqxx::params{batch->alarm_buffer});
-			batch->alarm_batch_success = true;
-			++(m_args->monitoring_vars->alarm_submissions);
-		} catch (std::exception& e){
-			batch->alarm_batch_success = false;
-			++(m_args->monitoring_vars->alarm_submissions_failed);
-			// FIXME log the error here
+		if(batch->got_alarms()){
+			printf("calling prepped for alarm buffer '%s'\n",batch->alarm_buffer.c_str());
+			try {
+				tx->exec(pqxx::prepped{"alarms_insert"}, pqxx::params{batch->alarm_buffer});
+				++(m_args->monitoring_vars->alarm_submissions);
+			} catch (std::exception& e){
+				batch->alarm_batch_err = current_exception_name()+": "+e.what();
+				++(m_args->monitoring_vars->alarm_submissions_failed);
+				std::cerr<<"dbworker alarm batch '"<<batch->alarm_buffer<<"' insert failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
+				delete tx;
+				tx = new pqxx::work(*conn.get());
+				// FIXME log the error here
+			}
 		}
 		
 		// the remaining insertions return the new version number
@@ -375,63 +421,98 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 		// but slower for small results. TODO check whether ours count as 'large' .. probably not.
 		
 		// device config insertions
-		try {
-			tx.for_query(pqxx::prepped{"device_config_insert"},
-				[&batch](int32_t new_version_num){
-					batch->devconfig_version_nums.push_back(new_version_num);
-				}, pqxx::params{batch->devconfig_buffer});
-			++(m_args->monitoring_vars->devconfig_submissions);
-		} catch (std::exception& e){
-			++(m_args->monitoring_vars->devconfig_submissions_failed);
-			// FIXME log the error here
+		if(batch->got_devconfigs()){
+			printf("calling prepped for dev_config buffer '%s'\n",batch->devconfig_buffer.c_str());
+			try {
+				tx->for_query(pqxx::prepped{"device_config_insert"},
+					[&batch](int32_t new_version_num){
+						batch->devconfig_version_nums.push_back(new_version_num);
+					}, pqxx::params{batch->devconfig_buffer});
+				++(m_args->monitoring_vars->devconfig_submissions);
+			} catch (std::exception& e){
+				++(m_args->monitoring_vars->devconfig_submissions_failed);
+				batch->devconfig_batch_err = current_exception_name()+": "+e.what();
+				std::cerr<<"dbworker devconfig insert '"<<batch->devconfig_buffer<<"' failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
+				// FIXME log the error here
+				delete tx;
+				tx = new pqxx::work(*conn.get());
+			}
 		}
 		
 		// run config insertions
-		try {
-			tx.for_query(pqxx::prepped{"run_config_insert"},
-				[&batch](int32_t new_version_num){
-					batch->runconfig_version_nums.push_back(new_version_num);
-				}, pqxx::params{batch->runconfig_buffer});
-			++(m_args->monitoring_vars->runconfig_submissions);
-		} catch (std::exception& e){
-			++(m_args->monitoring_vars->runconfig_submissions_failed);
-			// FIXME log the error here
+		if(batch->got_runconfigs()){
+			printf("calling prepped for run_config buffer '%s'\n",batch->runconfig_buffer.c_str());
+			try {
+				tx->for_query(pqxx::prepped{"run_config_insert"},
+					[&batch](int32_t new_version_num){
+						batch->runconfig_version_nums.push_back(new_version_num);
+					}, pqxx::params{batch->runconfig_buffer});
+				++(m_args->monitoring_vars->runconfig_submissions);
+			} catch (std::exception& e){
+				++(m_args->monitoring_vars->runconfig_submissions_failed);
+				batch->runconfig_batch_err = current_exception_name()+": "+e.what();
+				std::cerr<<"dbworker runconfig insert '"<<batch->runconfig_buffer<<"' failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
+				// FIXME log the error here
+				delete tx;
+				tx = new pqxx::work(*conn.get());
+			}
 		}
 		
 		// calibration data insertions
-		try {
-			tx.for_query(pqxx::prepped{"calibration_insert"},
-				[&batch](int32_t new_version_num){
-					batch->calibration_version_nums.push_back(new_version_num);
-				}, pqxx::params{batch->calibration_buffer});
-			++(m_args->monitoring_vars->calibration_submissions);
-		} catch (std::exception& e){
-			++(m_args->monitoring_vars->calibration_submissions_failed);
-			// FIXME log the error here
+		if(batch->got_calibrations()){
+			printf("calling prepped for calibration buffer '%s'\n",batch->calibration_buffer.c_str());
+			try {
+				tx->for_query(pqxx::prepped{"calibration_insert"},
+					[&batch](int32_t new_version_num){
+						batch->calibration_version_nums.push_back(new_version_num);
+					}, pqxx::params{batch->calibration_buffer});
+				++(m_args->monitoring_vars->calibration_submissions);
+			} catch (std::exception& e){
+				++(m_args->monitoring_vars->calibration_submissions_failed);
+				batch->calibration_batch_err = current_exception_name()+": "+e.what();
+				std::cerr<<"dbworker calibration insert '"<<batch->calibration_buffer<<"' failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
+				// FIXME log the error here
+				delete tx;
+				tx = new pqxx::work(*conn.get());
+			}
 		}
 		
 		// rootplot insertions
-		try {
-			tx.for_query(pqxx::prepped{"rootplots_insert"},
-				[&batch](int32_t new_version_num){
-					batch->rootplot_version_nums.push_back(new_version_num);
-				}, pqxx::params{batch->rooplot_buffer});
-			++(m_args->monitoring_vars->rootplot_submissions);
-		} catch (std::exception& e){
-			++(m_args->monitoring_vars->rootplot_submissions_failed);
-			// FIXME log the error here
+		if(batch->got_rootplots()){
+			printf("calling prepped for rootplots buffer '%s'\n",batch->rootplot_buffer.c_str());
+			try {
+				tx->for_query(pqxx::prepped{"rootplots_insert"},
+					[&batch](int32_t new_version_num){
+						batch->rootplot_version_nums.push_back(new_version_num);
+					}, pqxx::params{batch->rootplot_buffer});
+				++(m_args->monitoring_vars->rootplot_submissions);
+			} catch (std::exception& e){
+				++(m_args->monitoring_vars->rootplot_submissions_failed);
+				batch->rootplot_batch_err = current_exception_name()+": "+e.what();
+				std::cerr<<"dbworker rootplot insert '"<<batch->rootplot_buffer<<"' failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
+				// FIXME log the error here
+				delete tx;
+				tx = new pqxx::work(*conn.get());
+			}
 		}
 		
 		// plotlyplot insertions
-		try {
-			tx.for_query(pqxx::prepped{"plotlyplots_insert"},
-				[&batch](int32_t new_version_num){
-					batch->plotlyplot_version_nums.push_back(new_version_num);
-				}, pqxx::params{batch->plotlyplot_buffer});
-			++(m_args->monitoring_vars->plotlyplot_submissions);
-		} catch (std::exception& e){
-			++(m_args->monitoring_vars->plotlyplot_submissions_failed);
-			// FIXME log the error here
+		if(batch->got_plotlyplots()){
+			printf("calling prepped for plotlyplots buffer '%s'\n",batch->plotlyplot_buffer.c_str());
+			try {
+				tx->for_query(pqxx::prepped{"plotlyplots_insert"},
+					[&batch](int32_t new_version_num){
+						batch->plotlyplot_version_nums.push_back(new_version_num);
+					}, pqxx::params{batch->plotlyplot_buffer});
+				++(m_args->monitoring_vars->plotlyplot_submissions);
+			} catch (std::exception& e){
+				++(m_args->monitoring_vars->plotlyplot_submissions_failed);
+				batch->plotlyplot_batch_err = current_exception_name()+": "+e.what();
+				std::cerr<<"dbworker plotlyplot insert '"<<batch->plotlyplot_buffer<<"' failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
+				// FIXME log the error here
+				delete tx;
+				tx = new pqxx::work(*conn.get());
+			}
 		}
 		
 		// generic query insertions
@@ -439,14 +520,22 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 		// so we need to loop over them.
 		// FIXME no performance optimisation here: don't expect there to be many... right?
 		// if there's a lot we could use a pipeline as below...but the overhead may not be worth it
+		printf("serially executing %d generic queries\n",batch->generic_write_query_indices.size());
 		for(size_t i : batch->generic_write_query_indices){
 			ZmqQuery& query = batch->queries[i];
 			try {
-				query.result = tx.exec(query.msg());
-				++(m_args->monitoring_vars->genericwrite_submissions);
+				query.result = tx->exec(query.msg());
+				++(m_args->monitoring_vars->generic_submissions);
 			} catch (std::exception& e){
-				++(m_args->monitoring_vars->genericwrite_submissions_failed);
+				++(m_args->monitoring_vars->generic_submissions_failed);
+				query.result.clear();
+				query.err = current_exception_name()+": "+e.what();
+				std::cerr<<"dbworker generic query '"<<query.msg()<<"' failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
+				pqxx::sql_error* sqle = dynamic_cast<pqxx::sql_error*>(&e);
+				//if(sqle) std::cerr<<"SQLSTATE is now "<<sqle->sqlstate()<<std::endl;
 				// FIXME log the error here
+				delete tx;
+				tx = new pqxx::work(*conn.get());
 			}
 		}
 	}
@@ -463,46 +552,53 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 	
 	// each batch contains a vector of queries, but unlike inserts, we can't batch these FIXME i think?
 	// for giggles, we'll pipeline them. This may even improve performance.
-	pqxx::pipeline px(tx);
+	pqxx::pipeline px(*tx);
+	m_args->ids.clear();
+	m_args->pipeline_error = false;
+	printf("processing %d read query batches\n",m_args->read_queue.size());
 	for(QueryBatch* batch : m_args->read_queue){
+		
+		printf("pipelining batch of %d read queries\n",batch->queries.size());
+		
 		// it may be best to set the pipeline to retain ~the number of queries we're going to insert,
 		// so that it runs them all in one. TODO or maybe do it in two halves?
 		px.retain(batch->queries.size());
 		
-		// insert all the queries
+		// push all the queries to the DB
 		for(ZmqQuery& query : batch->queries){
-			px.insert(query.msg()); // returns a unique query_id (aka long)
+			m_args->ids.push_back(px.insert(query.msg()));
 		}
 		
-		// and then get the results
-		for(ZmqQuery& query : batch->queries){
+		// pull the results
+		for(size_t i=0; i<batch->queries.size(); ++i){
+			ZmqQuery& query = batch->queries[i];
 			try {
-				query.result.clear(); // should be redundant...but in case of error in ResultWorkers
 				if(px.empty()){
 					// we should never find the pipeline empty! ... i think?
-					// not sure if this may happen if we check too soon?? (i.e. no results ready *yet*?) FIXME??
-					// we call retreive once for each insert, somehow we've got out of sync!!
-					// FIXME log error, somehow we need to undo this mess.
-					// maybe it's best we do keep those query_ids after all...?
-					throw pqxx::failure{"empty pipeline"}; // or something..?
+					// unless this happens if we check too soon?? (i.e. no results ready *yet*?) FIXME??
+					m_args->pipeline_error=true;
+					break;
 				} else {
-					query.result = px.retrieve().second;
-					// technically this returns a pair of {query_id, result}
-					// TODO for safety we could ensure the id's match...
+					// FIXME note that retrieving a specific id will block until that result is available
+					// which means a long-running query will hold up sending replies to faster ones....
+					// actually, we'd have to wait on the whole pipeline before returning anyway,
+					// but this is an issue with batching...
+					query.result = px.retrieve(m_args->ids[i]);
 					++(m_args->monitoring_vars->readquery_submissions);
-					// FIXME technically we should decrement this if we throw anywhere as the whole lot gets rolled back?
 				}
 			} catch (std::exception& e){
 				++(m_args->monitoring_vars->readquery_submissions_failed);
-				// how do we encapsulate this error in the pqxx::result class?
-				// if the query returns no rows, does result.empty() return the same as if it has no result?
-				query.result.clear(); // this sets `m_query=nullptr` so maybe we can use that as a check...
+				query.result.clear(); // this sets `m_query=nullptr` so maybe we can use that as a check...? FIXME
+				query.err = current_exception_name()+": "+e.what(); // store info about what failed
+				std::cerr<<"dbworker read query '"<<query.msg()<<"' failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
 			}
 		}
 		
-		// sanity check
-		if(!px.empty()){
-			// pipeline should be empty! somehow we've retrieved more results than we should have??
+		// synchronization check
+		if(m_args->pipeline_error || !px.empty()){
+			// either we broke early because the pipeline was empty before we got all results,
+			// or pipeline is not empty and we're missing some...
+			std::cerr<<"dbworker pipeline error retrieving all results!"<<std::endl;
 			// FIXME log error, do something
 		}
 	}
@@ -514,25 +610,32 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 	// those statuses need to be reset!!! FIXME i guess do this in fail func?
 	// we therefore need to throw for ANY errors to invoke this!
 	try {
-		tx.commit();
+		tx->commit();
 	} catch(std::exception& e){
 		// oh yeaaa, the transaction might have commited, or it might not have. awesome.
 		// our consolation prize is a `pqxx::in_doubt_error`.
 		// FIXME supposedly, it is up to us to determine whether it committed or not
 		// perhaps by attempting to query whether the inserted records are found...
+		std::cerr<<"dbworker caught "<<current_exception_name()<<": "<<e.what()<<" committing transaction!"<<std::endl;
 	}
 	
 	// pass the batch onto the next stage of the pipeline for the DatabaseWorkers
-	std::unique_lock<std::mutex> locker(m_args->m_data->query_replies_mtx);
-	m_args->m_data->query_replies.insert(m_args->m_data->query_replies.end(),
-	                                     m_args->write_queue.begin(),m_args->write_queue.end());
+	if(!m_args->write_queue.empty()){
+		// FIXME FIXME FIXME rename 'read_replies' to 'raw_replies' or something better
+		printf("returning %d write acknowledgements to datamodel\n", m_args->write_queue.size());
+		std::unique_lock<std::mutex> locker(m_args->m_data->read_replies_mtx);
+		m_args->m_data->read_replies.insert(m_args->m_data->read_replies.end(),
+		                                     m_args->write_queue.begin(),m_args->write_queue.end());
+	}
 	
-	locker = std::unique_lock<std::mutex>(m_args->m_data->read_replies_mtx);
-	m_args->m_data->read_replies.insert(m_args->m_data->read_replies.end(),
-	                                    m_args->read_queue.begin(),m_args->read_queue.end());
-	locker.unlock();
+	if(!m_args->read_queue.empty()){
+		printf("returning %d read replies to datamodel\n", m_args->read_queue.size());
+		std::unique_lock<std::mutex> locker(m_args->m_data->read_replies_mtx);
+		m_args->m_data->read_replies.insert(m_args->m_data->read_replies.end(),
+		                                    m_args->read_queue.begin(),m_args->read_queue.end());
+	}
 	
-	std::cerr<<m_args->m_job_name<<" completed"<<std::endl;
+	printf("%s completed\n",m_args->m_job_name.c_str());
 	++(m_args->monitoring_vars->jobs_completed);
 	
 	// return our job args to the pool

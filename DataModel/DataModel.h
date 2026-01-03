@@ -11,6 +11,7 @@
 #include "QueryBatch.h"
 #include "ManagedSocket.h"
 #include "query_topics.h"
+#include "type_name_as_string.h" // mostly for debug
 class MonitoringVariables;
 
 /**

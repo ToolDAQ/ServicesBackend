@@ -10,8 +10,10 @@ bool SocketManager::Initialise(std::string configfile, DataModel &data){
 	InitialiseConfiguration(configfile);
 	//m_variables.Print();
 	
-	if(!m_variables.Get("verbose",m_verbose)) m_verbose=1;
+	m_verbose=1;
 	int update_ms=2000;
+	
+	m_variables.Get("verbose",m_verbose);
 	m_variables.Get("update_ms",update_ms);
 	
 	ExportConfiguration();
@@ -28,8 +30,13 @@ bool SocketManager::Initialise(std::string configfile, DataModel &data){
 	thread_args.update_period_ms = std::chrono::milliseconds{update_ms};
 	thread_args.last_update = std::chrono::steady_clock::now();
 	
-	m_data->utils.CreateThread("socket_manager", &Thread, &thread_args);
+	if(!m_data->utils.CreateThread("socket_manager", &Thread, &thread_args)){
+		Log(m_tool_name+": Failed to spawn background thread",v_error,m_verbose);
+		return false;
+	}
 	m_data->num_threads++;
+	
+	m_data->sc_vars.Add("Clients", SlowControlElementType::INFO, nullptr, nullptr); // INFO type doesnt need read fnct
 	
 	return true;
 }
@@ -67,7 +74,7 @@ void SocketManager::Thread(Thread_args* args){
 	SocketManager_args* m_args = dynamic_cast<SocketManager_args*>(args);
 	
 	m_args->last_update = std::chrono::steady_clock::now();
-	//m_args->m_data->Log("checking for new clients",22);   //FIXME
+	//printf("SocketManager checking for new clients\n");
 	
 	bool new_clients=false;
 	
@@ -77,12 +84,13 @@ void SocketManager::Thread(Thread_args* args){
 		ManagedSocket* sock = mgd_sock.second;
 		
 		std::unique_lock<std::mutex> locker(sock->socket_mtx);
-		int new_conn_count = (sock->connections.size() - m_args->daq_utils->UpdateConnections(sock->service_name, sock->socket, sock->connections, "", sock->port_name));
+		int new_conn_count = std::abs((long long int)sock->connections.size() - m_args->daq_utils->UpdateConnections(sock->service_name, sock->socket, sock->connections, "", sock->remote_port_name));
 		locker.unlock();
 		
 		if(new_conn_count!=0){
-			new_clients = true;
 			//m_args->m_data->services->SendLog(m_tool_name+": "+std::to_string(std::abs(new_conn_count))+" new connections to "+sock->service_name, v_message); // FIXME logging
+			printf("%d new %s connections made!\n",new_conn_count, sock->remote_port_name.c_str());
+			new_clients = true;
 			
 			// update the list of clients so they can be queried
 			for(std::pair<const std::string, Store*>& aservice : sock->connections){

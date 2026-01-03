@@ -54,7 +54,7 @@ class WriteQueryReceiver: public Tool {
 	WriteQueryReceiver_args thread_args;
 	WriteReceiveMonitoring monitoring_vars;
 	
-	std::string port_name; // name by which clients advertise sockets for sending write queries to the DB
+	std::string remote_port_name; // name by which clients advertise sockets for sending write queries to the DB
 	
 	bool am_master;
 	//bool Promote(); ///< Connect to clients to start receiving messages, if we became master

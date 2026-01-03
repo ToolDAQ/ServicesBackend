@@ -24,8 +24,8 @@ class DatabaseWorkerMonitoring : public MonitoringVariables {
 	std::atomic<int> runconfig_submissions_failed;
 	std::atomic<int> calibration_submissions;
 	std::atomic<int> calibration_submissions_failed;
-	std::atomic<int> genericwrite_submissions;
-	std::atomic<int> genericwrite_submissions_failed;
+	std::atomic<int> generic_submissions;
+	std::atomic<int> generic_submissions_failed;
 	std::atomic<int> readquery_submissions;
 	std::atomic<int> readquery_submissions_failed;
 	std::atomic<int> jobs_completed;
@@ -50,8 +50,8 @@ class DatabaseWorkerMonitoring : public MonitoringVariables {
 		             +",\"runconfig_submissions_failed\":"+std::to_string(runconfig_submissions_failed.load())
 		             +",\"calibration_submissions\":"+std::to_string(calibration_submissions.load())
 		             +",\"calibration_submissions_failed\":"+std::to_string(calibration_submissions_failed.load())
-		             +",\"genericwrite_submissions\":"+std::to_string(genericwrite_submissions.load())
-		             +",\"genericwrite_submissions_failed\":"+std::to_string(genericwrite_submissions_failed.load())
+		             +",\"generic_submissions\":"+std::to_string(generic_submissions.load())
+		             +",\"generic_submissions_failed\":"+std::to_string(generic_submissions_failed.load())
 		             +",\"readquery_submissions\":"+std::to_string(readquery_submissions.load())
 		             +",\"readquery_submissions_failed\":"+std::to_string(readquery_submissions_failed.load())
 		             +",\"jobs_failed\":"+std::to_string(jobs_failed.load())

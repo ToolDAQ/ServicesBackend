@@ -28,7 +28,11 @@ bool MulticastWorkers::Initialise(std::string configfile, DataModel &data){
 	
 	thread_args.m_data = m_data;
 	thread_args.monitoring_vars = &monitoring_vars;
-	m_data->utils.CreateThread("multicast_job_distributor", &Thread, &thread_args); // thread needs a unique name
+	// thread needs a unique name
+	if(!m_data->utils.CreateThread("multicast_job_distributor", &Thread, &thread_args)){
+		Log(m_tool_name+": Failed to spawn background thread",v_error,m_verbose);
+		return false;
+	}
 	m_data->num_threads++;
 	
 	return true;
@@ -107,6 +111,7 @@ void MulticastWorkers::Thread(Thread_args* args){
 		the_job->fail_func = MulticastMessageFail;
 		
 		//multicast_jobs.AddJob(the_job);
+		printf("spawning new multicastjob for %d messages\n",job_data->msg_buffer->size());
 		m_args->m_data->job_queue.AddJob(the_job);
 		
 	}
@@ -172,6 +177,8 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 	
 	// subsequently, all we need to do here is concatenate the JSONs
 	
+	printf("MulticastWorker job processing %d batches\n",m_args->msg_buffer->size());
+	
 	m_args->logging_buffer = "[";
 	m_args->monitoring_buffer = "[";
 	m_args->rootplot_buffer = "[";
@@ -185,8 +192,10 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 		// the Services class always puts the topic first,
 		// and all topics start with a unique character (XXX for now?),
 		// so we don't need to parse the message to identify the topic:
+//		printf("validating first 9 chars are topic: '%s', %d\n",next_msg.substr(0,9).c_str(),strcmp(next_msg.substr(0,9).c_str(),"{\"topic\":"));
 		if(next_msg.substr(0,9)!="{\"topic\":"){
 			// FIXME log it as bad multicast
+			printf("Ignoring Bad multicast message '%s'\n",next_msg.c_str());
 			continue;
 		}
 		
@@ -204,11 +213,13 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 				m_args->out_buffer = &m_args->plotlyplot_buffer;
 				break;
 			default:
+				printf("MCworkerJob: unknown multicast topic '%c' in message '%s'\n",next_msg[10],next_msg);
 				continue; // FIXME unknown topic: error log it.
 		}
 		
 		if(m_args->out_buffer->length()>1) (*m_args->out_buffer) += ", ";
 		(*m_args->out_buffer) += next_msg;
+		printf("added message '%s'\n",next_msg.c_str());
 		
 		++(m_args->monitoring_vars->msgs_processed);
 		
@@ -219,6 +230,7 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 		m_args->logging_buffer += "]";
 		std::unique_lock<std::mutex> locker(m_args->m_data->log_query_queue_mtx);
 		m_args->m_data->log_query_queue.push_back(m_args->logging_buffer);
+		printf("multicast worker adding '%s' to logging buffer\n",m_args->logging_buffer.c_str());
 	}
 	
 	if(m_args->monitoring_buffer.length()!=1){
@@ -243,7 +255,7 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 	m_args->msg_buffer->clear();
 	m_args->m_data->multicast_buffer_pool.Add(m_args->msg_buffer);
 	
-	std::cerr<<m_args->m_job_name<<" completed"<<std::endl;
+	printf("%s job completed\n",m_args->m_job_name.c_str());
 	++(m_args->monitoring_vars->jobs_completed);
 	
 	m_args->m_pool->Add(m_args);  // return our job args to the job args struct pool

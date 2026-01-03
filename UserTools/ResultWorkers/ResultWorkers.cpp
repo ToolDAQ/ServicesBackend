@@ -20,7 +20,10 @@ bool ResultWorkers::Initialise(std::string configfile, DataModel &data){
 	
 	thread_args.m_data = m_data;
 	thread_args.monitoring_vars = &monitoring_vars;
-	m_data->utils.CreateThread("result_job_distributor", &Thread, &thread_args);
+	if(!m_data->utils.CreateThread("result_job_distributor", &Thread, &thread_args)){
+		Log(m_tool_name+": Failed to spawn background thread",v_error,m_verbose);
+		return false;
+	}
 	m_data->num_threads++;
 	
 	return true;
@@ -63,9 +66,8 @@ void ResultWorkers::Thread(Thread_args* args){
 	
 	// grab a batch of read queries, with results awaiting conversion
 	std::unique_lock<std::mutex> locker(m_args->m_data->read_replies_mtx);
-	if(!m_args->m_data->read_replies.empty()){
-		std::swap(m_args->m_data->read_replies, m_args->local_msg_queue);
-	}
+	if(m_args->m_data->read_replies.empty()) return;
+	std::swap(m_args->m_data->read_replies, m_args->local_msg_queue);
 	locker.unlock();
 	
 	// add a job for each batch to the queue
@@ -95,6 +97,7 @@ void ResultWorkers::Thread(Thread_args* args){
 		m_args->m_data->job_queue.AddJob(the_job);
 		
 	}
+	m_args->local_msg_queue.clear();
 	
 	// TODO add workers that also call setstatus  /setversion on batch jobs and then pass them to send thread?
 	// maybe we can generalise to setreply if needed, depending on reply format & batching of read queries
@@ -146,9 +149,9 @@ bool ResultWorkers::ResultJob(void*& arg){
 				
 				// set whether the query succeeded or threw an exception
 				if(query.result.query().empty()){  // FIXME not sure if this is a good check necessarily, esp w/pipelining?
-					
 					query.setsuccess(0);
-					query.setresponserows(0);
+					query.setresponserows(1);
+					query.setresponse(0, query.err);
 					
 				} else {
 					query.setsuccess(1);
@@ -217,8 +220,8 @@ bool ResultWorkers::ResultJob(void*& arg){
 						
 					} // generic query, manual json formation rom fields
 					
-					// release pqxx::result
-					query.result.clear();
+					// release pqxx::result and clear error
+					query.Clear();
 					
 				} // if we had a result object
 			} // loop over queries in this batch
@@ -245,48 +248,60 @@ bool ResultWorkers::ResultJob(void*& arg){
 				switch(query_topic{query.topic()[2]}){
 					// alarms return just the success status
 					case query_topic::alarm:
-						query.setsuccess(m_args->batch->alarm_batch_success);
+						query.setsuccess(m_args->batch->alarm_batch_err.empty());
 						query.setresponserows(0);
 						break;
 						
 					// everything else returns a version number
 					case query_topic::dev_config:
 						query.setsuccess(devconfigs_ok);
+						query.setresponserows(1);
 						if(devconfigs_ok){
-							query.setresponserows(1);
 							query.setresponse(0, m_args->batch->devconfig_version_nums[devconfig_i++]);
+						} else {
+							// FIXME is it worth propagating the error back to the user?
+							// since it's a batch insert, the error may have nothing to do with their query...
+							query.setresponse(0, m_args->batch->devconfig_batch_err);
 						}
 						break;
 						
 					case query_topic::run_config:
 						query.setsuccess(runconfigs_ok);
+						query.setresponserows(1);
 						if(runconfigs_ok){
-							query.setresponserows(1);
 							query.setresponse(0, m_args->batch->runconfig_version_nums[runconfig_i++]);
+						} else {
+							query.setresponse(0, m_args->batch->runconfig_batch_err);
 						}
 						break;
 						
 					case query_topic::calibration:
 						query.setsuccess(calibrations_ok);
+						query.setresponserows(1);
 						if(calibrations_ok){
-							query.setresponserows(1);
 							query.setresponse(0, m_args->batch->calibration_version_nums[calibration_i++]);
+						} else {
+							query.setresponse(0, m_args->batch->calibration_batch_err);
 						}
 						break;
 						
 					case query_topic::plotlyplot:
 						query.setsuccess(plotlyplots_ok);
+						query.setresponserows(1);
 						if(plotlyplots_ok){
-							query.setresponserows(1);
 							query.setresponse(0, m_args->batch->plotlyplot_version_nums[plotlyplot_i++]);
+						} else {
+							query.setresponse(0, m_args->batch->plotlyplot_batch_err);
 						}
 						break;
 						
 					case query_topic::rootplot:
 						query.setsuccess(rootplots_ok);
+						query.setresponserows(1);
 						if(rootplots_ok){
-							query.setresponserows(1);
 							query.setresponse(0, m_args->batch->rootplot_version_nums[rootplot_i++]);
+						} else {
+							query.setresponse(0, m_args->batch->rootplot_batch_err);
 						}
 						break;
 						
@@ -298,6 +313,7 @@ bool ResultWorkers::ResultJob(void*& arg){
 							// around a user's generic sql, we can combine this with the above.
 							// But, given the arbitrary complexity of statements, this may not be possible.
 							// in which case, we need to loop over rows and convert them to JSON manually
+							query.setresponserows(std::size(query.result));
 							for(size_t i=0; i<std::size(query.result); ++i){
 								
 								// build a json from fields in this row
@@ -323,20 +339,21 @@ bool ResultWorkers::ResultJob(void*& arg){
 						} catch (std::exception& e){
 							std::cerr<<"caught "<<e.what()<<" trying to access query result!"<<std::endl;
 							query.setsuccess(0);
-							query.setresponserows(0);
+							query.setresponserows(1);
+							query.setresponse(0, query.err);
 							++(m_args->monitoring_vars->result_access_errors);
 						}
 						break;
 						
 					default:
 						// FIXME corrupted topic, log it.
-						//std::cerr<<m_tool_name<<"unknown topic"<<std::endl;
+						std::cerr<<m_args->m_job_name<<" unknown topic "<<query.topic()<<std::endl;
 						break;
 					
 				}
 				
-				// release pqxx::result
-				query.result.clear();
+				// release pqxx::result and clear error
+				query.Clear();
 				
 			} // loop over queries in this batch
 			
@@ -353,7 +370,7 @@ bool ResultWorkers::ResultJob(void*& arg){
 	m_args->m_data->query_replies.push_back(m_args->batch);
 	locker.unlock();
 	
-	std::cerr<<m_args->m_job_name<<" completed"<<std::endl;
+	printf("%s completed\n",m_args->m_job_name.c_str());
 	++(m_args->monitoring_vars->jobs_completed);
 	
 	// return our job args to the pool
