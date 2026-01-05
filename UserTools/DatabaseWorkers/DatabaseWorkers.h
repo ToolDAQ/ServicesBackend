@@ -2,6 +2,7 @@
 #define DatabaseWorkers_H
 
 #include <iostream>
+#include <set>
 
 #include "Tool.h"
 #include "DataModel.h"
@@ -18,6 +19,8 @@
 * Contact: marcus.o-flaherty@warwick.ac.uk
 */
 
+enum class DatabaseJobStep { generics, logging, monitoring, rootplots, plotlyplots, writes, finish };
+
 struct DatabaseJobStruct {
 	
 	DatabaseJobStruct(Pool<DatabaseJobStruct>* pool, DataModel* data, DatabaseWorkerMonitoring* mon) : m_pool(pool), m_data(data), monitoring_vars(mon){};
@@ -33,8 +36,23 @@ struct DatabaseJobStruct {
 	std::vector<std::string> rootplot_queue;
 	std::vector<std::string> plotlyplot_queue;
 	
+	std::set<int16_t> bad_logs;
+	std::set<int16_t> bad_mons;
+	std::set<int16_t> bad_rootplots;
+	std::set<int16_t> bad_plotlyplots;
+	
+	uint16_t last_i;
+	
 	std::vector<pqxx::pipeline::query_id> ids;
 	bool pipeline_error;
+	
+	bool had_error;
+	DatabaseJobStep checkpoint;
+	DatabaseJobStep endpoint;
+	size_t checkpoint_i;
+	size_t checkpoint_j;
+	size_t endpoint_i;
+	size_t endpoint_j;
 	
 	void clear(){
 		read_queue.clear();
@@ -43,6 +61,15 @@ struct DatabaseJobStruct {
 		monitoring_queue.clear();
 		rootplot_queue.clear();
 		plotlyplot_queue.clear();
+		
+		bad_logs.clear();
+		bad_mons.clear();
+		bad_rootplots.clear();
+		bad_plotlyplots.clear();
+		
+		had_error=false;
+		endpoint=DatabaseJobStep::finish;
+		
 	}
 	
 };

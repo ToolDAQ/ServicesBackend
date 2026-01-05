@@ -65,9 +65,9 @@ void ResultWorkers::Thread(Thread_args* args){
 	ResultJobDistributor_args* m_args = reinterpret_cast<ResultJobDistributor_args*>(args);
 	
 	// grab a batch of read queries, with results awaiting conversion
-	std::unique_lock<std::mutex> locker(m_args->m_data->read_replies_mtx);
-	if(m_args->m_data->read_replies.empty()) return;
-	std::swap(m_args->m_data->read_replies, m_args->local_msg_queue);
+	std::unique_lock<std::mutex> locker(m_args->m_data->query_results_mtx);
+	if(m_args->m_data->query_results.empty()) return;
+	std::swap(m_args->m_data->query_results, m_args->local_msg_queue);
 	locker.unlock();
 	
 	// add a job for each batch to the queue

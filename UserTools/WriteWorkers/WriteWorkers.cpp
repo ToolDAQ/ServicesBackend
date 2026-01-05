@@ -191,7 +191,7 @@ bool WriteWorkers::WriteMessageJob(void*& arg){
 				break;
 			case query_topic::generic:
 				// these can't be buffered, just note their indices for the DB workers
-				m_args->local_msg_queue->generic_write_query_indices.push_back(i);
+				m_args->local_msg_queue->generic_query_indices.push_back(i);
 				continue;
 				break;
 			default:

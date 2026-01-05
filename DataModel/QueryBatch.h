@@ -23,7 +23,7 @@ struct QueryBatch {
 	std::string rootplot_buffer;
 	
 	// flagged for can't be batch inserted by workers
-	std::vector<size_t> generic_write_query_indices;
+	std::vector<size_t> generic_query_indices;
 	
 	// set by database workers after batch insert
 	std::vector<uint32_t> devconfig_version_nums;
@@ -52,7 +52,7 @@ struct QueryBatch {
 		calibration_version_nums.clear();
 		plotlyplot_version_nums.clear();
 		rootplot_version_nums.clear();
-		generic_write_query_indices.clear();
+		generic_query_indices.clear();
 		
 		alarm_batch_err.clear();
 		devconfig_batch_err.clear();
@@ -88,7 +88,7 @@ struct QueryBatch {
 	bool got_calibrations() const { return !calibration_buffer.empty(); }
 	bool got_plotlyplots() const { return !plotlyplot_buffer.empty(); }
 	bool got_rootplots() const { return !rootplot_buffer.empty(); }
-	bool got_generics() const { return !generic_write_query_indices.empty(); }
+	bool got_generics() const { return !generic_query_indices.empty(); }
 	
 };
 

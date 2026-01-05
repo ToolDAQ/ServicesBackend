@@ -127,8 +127,8 @@ class DataModel : public DAQDataModelBase {
 	/*               DatabaseWorkers             */
 	/* ----------------------------------------- */
 	
-	std::vector<QueryBatch*> read_replies; // output, awaiting for result conversion
-	std::mutex read_replies_mtx;
+	std::vector<QueryBatch*> query_results; // output, awaiting for result conversion
+	std::mutex query_results_mtx;
 	
 	private:
 	
