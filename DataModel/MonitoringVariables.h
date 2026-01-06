@@ -7,7 +7,7 @@ class MonitoringVariables {
 	public:
 	MonitoringVariables(){};
 	virtual ~MonitoringVariables(){};
-	virtual std::string toJSON()=0;
+	virtual std::string toJSON(){ return ""; };
 	ToolFramework::Store vars;
 	std::mutex mtx;
 	void Clear(){
@@ -23,14 +23,17 @@ class MonitoringVariables {
 		return;
 	}
 	
-	std::string GetJson(){
+	std::string GetJSON(){
 		std::unique_lock<std::mutex> locker(mtx);
 		std::string ret;
 		vars >> ret;
-		ret.pop_back(); // remove trailing '}'
 		std::string ret2 = toJSON();
-		ret2[0]=','; // replace leading '{' with ',' to concatenate the two
-		return ret+ret2;
+		if(!ret2.empty()){
+			ret.pop_back(); // remove trailing '}'
+			ret2[0]=','; // replace leading '{' with ',' to concatenate the two
+			ret += ret2;
+		}
+		return ret;
 	}
 	
 };

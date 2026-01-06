@@ -370,7 +370,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 					++(m_args->monitoring_vars->readquery_submissions);
 				} catch (std::exception& e){
 					++(m_args->monitoring_vars->readquery_submissions_failed);
-					query.result.clear(); // this sets `m_query=nullptr` so maybe we can use that as a check...? FIXME
+					query.result.clear();
 					query.err = current_exception_name()+": "+e.what(); // store info about what failed
 					std::cerr<<"dbworker read query '"<<query.msg()<<"' failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
 					
@@ -442,7 +442,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 		for(size_t i=0; i<m_args->last_i; ++i){
 			QueryBatch* batch = m_args->write_queue[i];
 			printf("executing %d generic queries for next batch\n",batch->generic_query_indices.size());
-			size_t last_j = (m_args->endpoint==DatabaseJobStep::logging) ? m_args->endpoint_j : batch->generic_query_indices.size();
+			size_t last_j = (m_args->endpoint==DatabaseJobStep::generics) ? m_args->endpoint_j : batch->generic_query_indices.size();
 			for(size_t j=m_args->checkpoint_j; j<last_j; ++j){
 				ZmqQuery& query = batch->queries[batch->generic_query_indices[j]];
 				if(!query.err.empty()) continue; // skip queries flagged bad on a previous iteration

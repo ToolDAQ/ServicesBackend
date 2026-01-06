@@ -2,7 +2,6 @@
 
 ReadQueryReceiverReplySender::ReadQueryReceiverReplySender():Tool(){}
 
-//FIXME call it readqueryreceviverandreplysender
 bool ReadQueryReceiverReplySender::Initialise(std::string configfile, DataModel &data){
 	
 	InitialiseTool(data);
@@ -83,8 +82,8 @@ bool ReadQueryReceiverReplySender::Initialise(std::string configfile, DataModel 
 	thread_args.m_data = m_data;
 	thread_args.m_tool_name = m_tool_name;
 	thread_args.monitoring_vars = &monitoring_vars;
-	thread_args.socket = managed_socket->socket; // FIXME get from struct. 
-	thread_args.socket_mtx = &managed_socket->socket_mtx; // FIXME get from struct. For sharing socket with SocketManager
+	thread_args.socket = managed_socket->socket;
+	thread_args.socket_mtx = &managed_socket->socket_mtx;
 	thread_args.poll_timeout_ms = poll_timeout_ms;
 	thread_args.polls.emplace_back(*managed_socket->socket,0,ZMQ_POLLIN,0);
 	thread_args.polls.emplace_back(*managed_socket->socket,0,ZMQ_POLLOUT,0);
@@ -113,6 +112,7 @@ bool ReadQueryReceiverReplySender::Execute(){
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		++(monitoring_vars.thread_crashes);
 	}
+	// FIXME add monitoring info: queue sizes
 	
 	return true;
 }
@@ -126,17 +126,8 @@ bool ReadQueryReceiverReplySender::Finalise(){
 	std::cerr<<"ReadReceiver thread terminated"<<std::endl;
 	m_data->num_threads--;
 	
-	// FIXME ensure we don't interfere with SocketManager? Better to leave that to do deletion in its destructor?
-	/*
-	if(managed_socket->socket){
-		std::unique_lock<std::mutex> lock(managed_socket->socket_mtx);
-		delete managed_socket->socket;
-		managed_socket->socket=nullptr;
-	}
-	*/
-	
+	std::unique_lock<std::mutex> locker(m_args->m_data->managed_sockets_mtx);
 	if(m_data->managed_sockets.count(remote_port_name)){
-		std::unique_lock<std::mutex> locker(m_data->managed_sockets_mtx);
 		ManagedSocket* sock = m_data->managed_sockets[remote_port_name];
 		m_data->managed_sockets.erase(remote_port_name);
 		locker.unlock();
@@ -144,7 +135,7 @@ bool ReadQueryReceiverReplySender::Finalise(){
 		delete sock;
 	}
 	
-	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
+	locker = std::unique_lock<std::mutex>(m_data->monitoring_variables_mtx);
 	m_data->monitoring_variables.erase(m_tool_name);
 	
 	Log(m_tool_name+": Finished",v_warning);
@@ -292,7 +283,7 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 	// write
 	// =====
 	//m_args->m_data->Log("Size of reply queue is "+
-	//    (m_args->out_local_queue ? std::to_string(m_args->out_local_queue.size()) : std::string{"0"}),10); // FIXME
+	//    (m_args->out_local_queue ? std::to_string(m_args->out_local_queue.size()) : std::string{"0"}),10);
 	
 	// send next response message, if we have one in the queue
 	if(m_args->out_local_queue!=nullptr && m_args->out_i<m_args->out_local_queue->queries.size()){

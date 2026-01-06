@@ -168,7 +168,6 @@ bool WriteWorkers::WriteMessageJob(void*& arg){
 		// as t(time timestamptz, name text, data jsonb) returning version;"
 		// as before, such batches need to be grouped according to destination table
 		switch(query_topic{query.topic()[2]}){
-			// FIXME switch letter to query_type enum class
 			case query_topic::alarm:
 				// alarm insertions require no return value,
 				// but we still need to send back an acknowledgement once the alarm is inserted

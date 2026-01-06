@@ -93,7 +93,6 @@ bool WriteQueryReceiver::Initialise(std::string configfile, DataModel &data){
 	return true;
 }
 
-// FIXME renoame to writequeryreceiver
 bool WriteQueryReceiver::Execute(){
 	
 	if(!thread_args.running){
@@ -208,8 +207,8 @@ void WriteQueryReceiver::Thread(Thread_args* args){
 		printf("%s receiving message\n",m_args->m_tool_name.c_str());
 		
 		if(m_args->make_new){
-			m_args->in_local_queue->queries.emplace_back(); // FIXME we could resize(local_buffer_size) on retreive new
-			m_args->make_new = false;               // then resize down to actual size on transfer out
+			m_args->in_local_queue->queries.emplace_back();
+			m_args->make_new = false;
 		}
 		ZmqQuery& msg_buf = m_args->in_local_queue->queries.back();
 		msg_buf.parts.resize(4);

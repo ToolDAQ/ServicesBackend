@@ -2,6 +2,10 @@
 
 #include <chrono>
 
+namespace {
+  const uint32_t MAX_UDP_PACKET_SIZE = 655355;
+}
+
 MulticastReceiverSender::MulticastReceiverSender():Tool(){}
 
 
@@ -287,8 +291,8 @@ void MulticastReceiverSender::Thread(Thread_args* arg){
 	if(m_args->poll.revents & ZMQ_POLLIN){
 		printf("%s receiving message\n",m_args->m_tool_name.c_str());
 		
-		// read the messge        FIXME name max num bytes in multicast message
-		m_args->get_ok = recvfrom(m_args->socket, m_args->message, 655355, 0, (struct sockaddr*)&m_args->addr, &m_args->addrlen);
+		// read the messge
+		m_args->get_ok = recvfrom(m_args->socket, m_args->message, MAX_UDP_PACKET_SIZE, 0, (struct sockaddr*)&m_args->addr, &m_args->addrlen);
 		if(m_args->get_ok <= 0){
 			++(m_args->monitoring_vars->rcv_fails);
 			// FIXME better logging
@@ -300,7 +304,7 @@ void MulticastReceiverSender::Thread(Thread_args* arg){
 			
 			++(m_args->monitoring_vars->msgs_rcvd);
 			//m_data->Log(m_tool_name+": Received multicast message '"+std::string(m_args->message)
-			//            +"' from "+std::string{inet_ntoa(&m_args->addr->sin_addr)},12); // FIXME streamline
+			//            +"' from "+std::string{inet_ntoa(&m_args->addr->sin_addr)},12);
 			
 			m_args->in_local_queue->emplace_back(m_args->message);
 			
@@ -341,8 +345,6 @@ void MulticastReceiverSender::Thread(Thread_args* arg){
 		locker.unlock();
 		
 	}
-	
-	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	
 	return;
 }
