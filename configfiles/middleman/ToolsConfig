@@ -9,4 +9,5 @@ resultWorkers ResultWorkers configfiles/middleman/ResultWorkersConfig
 jobManager JobManager configfiles/middleman/JobManagerConfig
 socketManager SocketManager configfiles/middleman/SocketManagerConfig
 monitoring Monitoring configfiles/middleman/MonitoringConfig
+sleep Sleep configfiles/middleman/SleepConfig
 

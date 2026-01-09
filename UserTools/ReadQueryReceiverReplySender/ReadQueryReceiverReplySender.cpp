@@ -85,8 +85,8 @@ bool ReadQueryReceiverReplySender::Initialise(std::string configfile, DataModel 
 	thread_args.socket = managed_socket->socket;
 	thread_args.socket_mtx = &managed_socket->socket_mtx;
 	thread_args.poll_timeout_ms = poll_timeout_ms;
-	thread_args.polls.emplace_back(*managed_socket->socket,0,ZMQ_POLLIN,0);
-	thread_args.polls.emplace_back(*managed_socket->socket,0,ZMQ_POLLOUT,0);
+	thread_args.in_poll = zmq::pollitem_t{*managed_socket->socket,0,ZMQ_POLLIN,0};
+	thread_args.out_poll = zmq::pollitem_t{*managed_socket->socket,0,ZMQ_POLLOUT,0};
 	thread_args.in_local_queue = m_data->querybatch_pool.GetNew(local_buffer_size);
 	thread_args.make_new = true;
 	thread_args.local_buffer_size = local_buffer_size;
@@ -179,28 +179,28 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 	try {
 		m_args->get_ok=0;
 		std::unique_lock<std::mutex> locker(*m_args->socket_mtx);
-		m_args->get_ok = zmq::poll(m_args->polls.data(), 2, m_args->poll_timeout_ms);
+		m_args->get_ok = zmq::poll(&m_args->in_poll, 1, m_args->poll_timeout_ms);
 	} catch(zmq::error_t& err){
 		// ignore poll aborting due to signals
 		if(zmq_errno()==EINTR) return; // this is probably fine
-		//std::cerr<<m_args->m_tool_name<<" poll caught "<<err.what()<<std::endl; // FIXME re-enable
+		std::cerr<<m_args->m_tool_name<<" in poll caught "<<err.what()<<std::endl;
 		++(m_args->monitoring_vars->polls_failed);
 //		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 		return;
 	}
 	catch(std::exception& err){
-		std::cerr<<m_args->m_tool_name<<" poll caught "<<err.what()<<std::endl;
+		std::cerr<<m_args->m_tool_name<<" in poll caught "<<err.what()<<std::endl;
 		++(m_args->monitoring_vars->polls_failed);
 //		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 		return;
 	} catch(...){
-		std::cerr<<m_args->m_tool_name<<" poll caught "<<strerror(errno)<<std::endl;
+		std::cerr<<m_args->m_tool_name<<" in poll caught "<<strerror(errno)<<std::endl;
 		++(m_args->monitoring_vars->polls_failed);
 //		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 		return;
 	}
 	if(m_args->get_ok<0){
-		std::cerr<<m_args->m_tool_name<<" poll failed with "<<zmq_strerror(errno)<<std::endl;
+		std::cerr<<m_args->m_tool_name<<" in poll failed with "<<zmq_strerror(errno)<<std::endl;
 		++(m_args->monitoring_vars->polls_failed);
 //		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 		return;
@@ -208,7 +208,7 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 	
 	// read
 	// ====
-	if(m_args->polls[0].revents & ZMQ_POLLIN){
+	if(m_args->in_poll.revents & ZMQ_POLLIN){
 		printf("%s receiving message\n",m_args->m_tool_name.c_str());
 		
 		if(m_args->make_new){
@@ -288,8 +288,40 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 	// send next response message, if we have one in the queue
 	if(m_args->out_local_queue!=nullptr && m_args->out_i<m_args->out_local_queue->queries.size()){
 		
+		// poll
+		// ====
+		try {
+			m_args->get_ok=0;
+			std::unique_lock<std::mutex> locker(*m_args->socket_mtx);
+			m_args->get_ok = zmq::poll(&m_args->out_poll, 1, m_args->poll_timeout_ms);
+		} catch(zmq::error_t& err){
+			// ignore poll aborting due to signals
+			if(zmq_errno()==EINTR) return; // this is probably fine
+			std::cerr<<m_args->m_tool_name<<" out poll caught "<<err.what()<<std::endl;
+			++(m_args->monitoring_vars->polls_failed);
+	//		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
+			return;
+		}
+		catch(std::exception& err){
+			std::cerr<<m_args->m_tool_name<<" out poll caught "<<err.what()<<std::endl;
+			++(m_args->monitoring_vars->polls_failed);
+	//		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
+			return;
+		} catch(...){
+			std::cerr<<m_args->m_tool_name<<" out poll caught "<<strerror(errno)<<std::endl;
+			++(m_args->monitoring_vars->polls_failed);
+	//		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
+			return;
+		}
+		if(m_args->get_ok<0){
+			std::cerr<<m_args->m_tool_name<<" out poll failed with "<<zmq_strerror(errno)<<std::endl;
+			++(m_args->monitoring_vars->polls_failed);
+	//		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
+			return;
+		}
+		
 		// check we had a listener ready
-		if(m_args->polls[1].revents & ZMQ_POLLOUT){
+		if(m_args->out_poll.revents & ZMQ_POLLOUT){
 			
 			printf("%s sending reply %d/%d\n",m_args->m_tool_name.c_str(),m_args->out_i,m_args->out_local_queue->queries.size()); // FIXME better logging
 			

@@ -26,7 +26,8 @@ struct ReadQueryReceiverReplySender_args : public Thread_args {
 	std::mutex* socket_mtx; // for sharing the socket with ServicesManager Tool for finding clients
 	
 	int poll_timeout_ms;
-	std::vector<zmq::pollitem_t> polls;
+	zmq::pollitem_t in_poll;
+	zmq::pollitem_t out_poll;
 	zmq::message_t msg_discard;
 	bool make_new;
 	int msg_parts;

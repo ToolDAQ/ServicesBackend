@@ -17,5 +17,6 @@ if (tool=="ResultWorkers") ret=new ResultWorkers;
 if (tool=="JobManager") ret=new JobManager;
 //if (tool=="QueueTrimmer") ret=new QueueTrimmer;
 //if (tool=="MiddlemanNegotiate") ret=new MiddlemanNegotiate;
+  if (tool=="Sleep") ret=new Sleep;
 return ret;
 }
