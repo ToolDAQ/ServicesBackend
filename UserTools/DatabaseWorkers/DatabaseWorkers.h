@@ -31,10 +31,10 @@ struct DatabaseJobStruct {
 	
 	std::vector<QueryBatch*> read_queue;
 	std::vector<QueryBatch*> write_queue;
-	std::vector<std::string> logging_queue;
-	std::vector<std::string> monitoring_queue;
-	std::vector<std::string> rootplot_queue;
-	std::vector<std::string> plotlyplot_queue;
+	std::vector<std::string*> logging_queue;
+	std::vector<std::string*> monitoring_queue;
+	std::vector<std::string*> rootplot_queue;
+	std::vector<std::string*> plotlyplot_queue;
 	
 	std::set<int16_t> bad_logs;
 	std::set<int16_t> bad_mons;

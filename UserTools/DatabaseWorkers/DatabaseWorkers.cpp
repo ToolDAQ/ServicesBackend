@@ -478,10 +478,10 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 		printf("calling prepped for %d logging batches\n",m_args->logging_queue.size());
 		for(size_t i=0; i<m_args->last_i; ++i){
 			if(m_args->bad_logs.count(i)) continue;
-			std::string& batch = m_args->logging_queue[i];
-			printf("dbworker inserting logging batch: '%s'\n",batch.c_str());
+			std::string* batch = m_args->logging_queue[i];
+			printf("dbworker inserting logging batch: '%s'\n",batch->c_str());
 			try {
-				tx->exec(pqxx::prepped{"logging_insert"}, pqxx::params{batch});
+				tx->exec(pqxx::prepped{"logging_insert"}, pqxx::params{*batch});
 				++(m_args->monitoring_vars->logging_submissions);
 			} catch (std::exception& e){
 				std::cerr<<"dbworker log insert failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
@@ -495,6 +495,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				delete tx;
 				tx = new pqxx::work(*conn.get());
 			}
+			m_args->m_data->multicast_batch_pool.Add(batch);
 		}
 		if(!m_args->had_error){
 			if(m_args->endpoint==DatabaseJobStep::monitoring) goto commitit;
@@ -507,9 +508,9 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 		printf("calling prepped for %d monitoring batches\n",m_args->monitoring_queue.size());
 		for(size_t i=0; i<m_args->last_i; ++i){
 			if(m_args->bad_mons.count(i)) continue;
-			std::string& batch = m_args->monitoring_queue[i];
+			std::string* batch = m_args->monitoring_queue[i];
 			try {
-				tx->exec(pqxx::prepped{"monitoring_insert"}, pqxx::params{batch});
+				tx->exec(pqxx::prepped{"monitoring_insert"}, pqxx::params{*batch});
 				++(m_args->monitoring_vars->monitoring_submissions);
 			} catch (std::exception& e){
 				++(m_args->monitoring_vars->monitoring_submissions_failed);
@@ -521,6 +522,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				delete tx;
 				tx = new pqxx::work(*conn.get());
 			}
+			m_args->m_data->multicast_batch_pool.Add(batch);
 		}
 		if(!m_args->had_error){
 			if(m_args->endpoint==DatabaseJobStep::rootplots) goto commitit;
@@ -533,9 +535,9 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 		printf("calling prepped for %d rootplot batches\n",m_args->rootplot_queue.size());
 		for(size_t i=0; i<m_args->last_i; ++i){
 			if(m_args->bad_rootplots.count(i)) continue;
-			std::string& batch = m_args->rootplot_queue[i];
+			std::string* batch = m_args->rootplot_queue[i];
 			try {
-				tx->exec(pqxx::prepped{"rootplots_insert"}, pqxx::params{batch});
+				tx->exec(pqxx::prepped{"rootplots_insert"}, pqxx::params{*batch});
 				++(m_args->monitoring_vars->rootplot_submissions);
 			} catch (std::exception& e){
 				++(m_args->monitoring_vars->rootplot_submissions_failed);
@@ -547,6 +549,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				delete tx;
 				tx = new pqxx::work(*conn.get());
 			}
+			m_args->m_data->multicast_batch_pool.Add(batch);
 		}
 		if(!m_args->had_error){
 			if(m_args->endpoint==DatabaseJobStep::plotlyplots) goto commitit;
@@ -559,9 +562,9 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 		printf("calling prepped for %d plotlyplot batches\n",m_args->plotlyplot_queue.size());
 		for(size_t i=0; i<m_args->last_i; ++i){
 			if(m_args->bad_plotlyplots.count(i)) continue;
-			std::string& batch = m_args->plotlyplot_queue[i];
+			std::string* batch = m_args->plotlyplot_queue[i];
 			try {
-				tx->exec(pqxx::prepped{"plotlyplots_insert"}, pqxx::params{batch});
+				tx->exec(pqxx::prepped{"plotlyplots_insert"}, pqxx::params{*batch});
 				++(m_args->monitoring_vars->plotlyplot_submissions);
 			} catch (std::exception& e){
 				++(m_args->monitoring_vars->plotlyplot_submissions_failed);
@@ -573,6 +576,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				delete tx;
 				tx = new pqxx::work(*conn.get());
 			}
+			m_args->m_data->multicast_batch_pool.Add(batch);
 		}
 		if(!m_args->had_error){
 			if(m_args->endpoint==DatabaseJobStep::writes) goto commitit;
@@ -616,7 +620,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				printf("calling prepped for dev_config buffer '%s'\n",batch->devconfig_buffer.c_str());
 				try {
 					tx->for_query(pqxx::prepped{"device_config_insert"},
-						[&batch](int32_t new_version_num){
+						[&batch](uint16_t new_version_num){
 							batch->devconfig_version_nums.push_back(new_version_num);
 						}, pqxx::params{batch->devconfig_buffer});
 					++(m_args->monitoring_vars->devconfig_submissions);
@@ -637,7 +641,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				printf("calling prepped for run_config buffer '%s'\n",batch->runconfig_buffer.c_str());
 				try {
 					tx->for_query(pqxx::prepped{"run_config_insert"},
-						[&batch](int32_t new_version_num){
+						[&batch](uint16_t new_version_num){
 							batch->runconfig_version_nums.push_back(new_version_num);
 						}, pqxx::params{batch->runconfig_buffer});
 					++(m_args->monitoring_vars->runconfig_submissions);
@@ -658,7 +662,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				printf("calling prepped for calibration buffer '%s'\n",batch->calibration_buffer.c_str());
 				try {
 					tx->for_query(pqxx::prepped{"calibration_insert"},
-						[&batch](int32_t new_version_num){
+						[&batch](uint16_t new_version_num){
 							batch->calibration_version_nums.push_back(new_version_num);
 						}, pqxx::params{batch->calibration_buffer});
 					++(m_args->monitoring_vars->calibration_submissions);
@@ -679,7 +683,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				printf("calling prepped for rootplots buffer '%s'\n",batch->rootplot_buffer.c_str());
 				try {
 					tx->for_query(pqxx::prepped{"rootplots_insert"},
-						[&batch](int32_t new_version_num){
+						[&batch](uint16_t new_version_num){
 							batch->rootplot_version_nums.push_back(new_version_num);
 						}, pqxx::params{batch->rootplot_buffer});
 					++(m_args->monitoring_vars->rootplot_submissions);
@@ -700,7 +704,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				printf("calling prepped for plotlyplots buffer '%s'\n",batch->plotlyplot_buffer.c_str());
 				try {
 					tx->for_query(pqxx::prepped{"plotlyplots_insert"},
-						[&batch](int32_t new_version_num){
+						[&batch](uint16_t new_version_num){
 							batch->plotlyplot_version_nums.push_back(new_version_num);
 						}, pqxx::params{batch->plotlyplot_buffer});
 					++(m_args->monitoring_vars->plotlyplot_submissions);

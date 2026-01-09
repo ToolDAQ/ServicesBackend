@@ -105,16 +105,18 @@ class DataModel : public DAQDataModelBase {
 	// FIXME these strings represent batches of multicast messages, so could be very large.
 	// each push_back could require reallocation, which could involve moving a lot of very large message buffers
 	// FIXME make these pointers, put the strings (maybe make a struct? maybe just a typedef/alias?) in a pool?
-	std::vector<std::string> log_query_queue;
+	Pool<std::string> multicast_batch_pool{true, 5000, 100};
+	
+	std::vector<std::string*> log_query_queue;
 	std::mutex log_query_queue_mtx;
 	
-	std::vector<std::string> mon_query_queue;
+	std::vector<std::string*> mon_query_queue;
 	std::mutex mon_query_queue_mtx;
 	
-	std::vector<std::string> rootplot_query_queue;
+	std::vector<std::string*> rootplot_query_queue;
 	std::mutex rootplot_query_queue_mtx;
 	
-	std::vector<std::string> plotlyplot_query_queue;
+	std::vector<std::string*> plotlyplot_query_queue;
 	std::mutex plotlyplot_query_queue_mtx;
 	
 	/* ----------------------------------------- */

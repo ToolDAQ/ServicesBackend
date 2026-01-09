@@ -103,9 +103,13 @@ void MulticastWorkers::Thread(Thread_args* args){
 			// alternatively do we just over-write the job pointer with new args (potentially leaking it)
 		}
 		MulticastJobStruct* job_data = static_cast<MulticastJobStruct*>(the_job->data);
-		job_data->msg_buffer = m_args->local_msg_queue[i];
 		job_data->monitoring_vars = m_args->monitoring_vars;
 		job_data->m_job_name = "multicast_worker";
+		job_data->msg_buffer = m_args->local_msg_queue[i];
+		job_data->logging_buffer = m_args->m_data->multicast_batch_pool.GetNew();
+		job_data->monitoring_buffer = m_args->m_data->multicast_batch_pool.GetNew();
+		job_data->rootplot_buffer = m_args->m_data->multicast_batch_pool.GetNew();
+		job_data->plotlyplot_buffer = m_args->m_data->multicast_batch_pool.GetNew();
 		
 		the_job->func = MulticastMessageJob;
 		the_job->fail_func = MulticastMessageFail;
@@ -179,10 +183,10 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 	
 	printf("MulticastWorker job processing %d batches\n",m_args->msg_buffer->size());
 	
-	m_args->logging_buffer = "[";
-	m_args->monitoring_buffer = "[";
-	m_args->rootplot_buffer = "[";
-	m_args->plotlyplot_buffer = "[";
+	*m_args->logging_buffer = "[";
+	*m_args->monitoring_buffer = "[";
+	*m_args->rootplot_buffer = "[";
+	*m_args->plotlyplot_buffer = "[";
 	
 	// loop over messages
 	for(std::string& next_msg : *m_args->msg_buffer){
@@ -201,16 +205,16 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 		
 		switch(query_topic{next_msg[10]}){
 			case query_topic::logging:
-				m_args->out_buffer = &m_args->logging_buffer;
+				m_args->out_buffer = m_args->logging_buffer;
 				break;
 			case query_topic::monitoring:
-				m_args->out_buffer = &m_args->monitoring_buffer;
+				m_args->out_buffer = m_args->monitoring_buffer;
 				break;
 			case query_topic::rootplot:
-				m_args->out_buffer = &m_args->rootplot_buffer;
+				m_args->out_buffer = m_args->rootplot_buffer;
 				break;
 			case query_topic::plotlyplot:
-				m_args->out_buffer = &m_args->plotlyplot_buffer;
+				m_args->out_buffer = m_args->plotlyplot_buffer;
 				break;
 			default:
 				printf("MCworkerJob: unknown multicast topic '%c' in message '%s'\n",next_msg[10],next_msg);
@@ -226,27 +230,27 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 	}
 	
 	// pass into datamodel for DatabaseWorkers
-	if(m_args->logging_buffer.length()!=1){
-		m_args->logging_buffer += "]";
+	if(m_args->logging_buffer->length()!=1){
+		*m_args->logging_buffer += "]";
 		std::unique_lock<std::mutex> locker(m_args->m_data->log_query_queue_mtx);
 		m_args->m_data->log_query_queue.push_back(m_args->logging_buffer);
-		printf("multicast worker adding '%s' to logging buffer\n",m_args->logging_buffer.c_str());
+		printf("multicast worker adding '%s' to logging buffer\n",m_args->logging_buffer->c_str());
 	}
 	
-	if(m_args->monitoring_buffer.length()!=1){
-		m_args->monitoring_buffer += "]";
+	if(m_args->monitoring_buffer->length()!=1){
+		*m_args->monitoring_buffer += "]";
 		std::unique_lock<std::mutex> locker(m_args->m_data->mon_query_queue_mtx);
 		m_args->m_data->mon_query_queue.push_back(m_args->monitoring_buffer);
 	}
 	
-	if(m_args->rootplot_buffer.length()!=1){
-		m_args->rootplot_buffer += "]";
+	if(m_args->rootplot_buffer->length()!=1){
+		*m_args->rootplot_buffer += "]";
 		std::unique_lock<std::mutex> locker(m_args->m_data->rootplot_query_queue_mtx);
 		m_args->m_data->rootplot_query_queue.push_back(m_args->rootplot_buffer);
 	}
 	
-	if(m_args->plotlyplot_buffer.length()!=1){
-		m_args->plotlyplot_buffer += "]";
+	if(m_args->plotlyplot_buffer->length()!=1){
+		*m_args->plotlyplot_buffer += "]";
 		std::unique_lock<std::mutex> locker(m_args->m_data->plotlyplot_query_queue_mtx);
 		m_args->m_data->plotlyplot_query_queue.push_back(m_args->plotlyplot_buffer);
 	}

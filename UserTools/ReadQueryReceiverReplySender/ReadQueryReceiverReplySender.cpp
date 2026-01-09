@@ -126,7 +126,7 @@ bool ReadQueryReceiverReplySender::Finalise(){
 	std::cerr<<"ReadReceiver thread terminated"<<std::endl;
 	m_data->num_threads--;
 	
-	std::unique_lock<std::mutex> locker(m_args->m_data->managed_sockets_mtx);
+	std::unique_lock<std::mutex> locker(m_data->managed_sockets_mtx);
 	if(m_data->managed_sockets.count(remote_port_name)){
 		ManagedSocket* sock = m_data->managed_sockets[remote_port_name];
 		m_data->managed_sockets.erase(remote_port_name);

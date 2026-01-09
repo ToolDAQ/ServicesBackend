@@ -26,11 +26,11 @@ struct MulticastJobStruct {
 	Pool<MulticastJobStruct>* m_pool;
 	std::string m_job_name;
 	std::vector<std::string>* msg_buffer;
+	std::string* logging_buffer;
+	std::string* monitoring_buffer;
+	std::string* rootplot_buffer;
+	std::string* plotlyplot_buffer;
 	std::string* out_buffer;
-	std::string logging_buffer;
-	std::string monitoring_buffer;
-	std::string rootplot_buffer;
-	std::string plotlyplot_buffer;
 	
 };
 

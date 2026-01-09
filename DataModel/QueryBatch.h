@@ -26,11 +26,11 @@ struct QueryBatch {
 	std::vector<size_t> generic_query_indices;
 	
 	// set by database workers after batch insert
-	std::vector<uint32_t> devconfig_version_nums;
-	std::vector<uint32_t> runconfig_version_nums;
-	std::vector<uint32_t> calibration_version_nums;
-	std::vector<uint32_t> plotlyplot_version_nums;
-	std::vector<uint32_t> rootplot_version_nums;
+	std::vector<uint16_t> devconfig_version_nums;
+	std::vector<uint16_t> runconfig_version_nums;
+	std::vector<uint16_t> calibration_version_nums;
+	std::vector<uint16_t> plotlyplot_version_nums;
+	std::vector<uint16_t> rootplot_version_nums;
 	
 	std::string alarm_batch_err;
 	std::string devconfig_batch_err;
