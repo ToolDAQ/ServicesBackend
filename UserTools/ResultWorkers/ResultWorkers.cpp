@@ -66,7 +66,10 @@ void ResultWorkers::Thread(Thread_args* args){
 	
 	// grab a batch of read queries, with results awaiting conversion
 	std::unique_lock<std::mutex> locker(m_args->m_data->query_results_mtx);
-	if(m_args->m_data->query_results.empty()) return;
+	if(m_args->m_data->query_results.empty()){
+		usleep(100);
+		return;
+	}
 	std::swap(m_args->m_data->query_results, m_args->local_msg_queue);
 	locker.unlock();
 	
@@ -98,10 +101,6 @@ void ResultWorkers::Thread(Thread_args* args){
 		
 	}
 	m_args->local_msg_queue.clear();
-	
-	// TODO add workers that also call setstatus  /setversion on batch jobs and then pass them to send thread?
-	// maybe we can generalise to setreply if needed, depending on reply format & batching of read queries
-	// or do we just do this in the connection / reply sender thread(s)?
 	
 	return;
 }

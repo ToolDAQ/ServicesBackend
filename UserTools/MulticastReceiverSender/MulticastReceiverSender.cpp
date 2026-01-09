@@ -315,7 +315,7 @@ void MulticastReceiverSender::Thread(Thread_args* arg){
 	// =====
 	if(m_args->out_i < m_args->out_local_queue.size()){
 		
-		printf("sending %s message\n",m_args->m_tool_name.c_str());
+		//printf("%s sending message\n",m_args->m_tool_name.c_str());
 		
 		// Get the message
 		std::string& message = m_args->out_local_queue[m_args->out_i++]; // always increment, even if error
@@ -337,7 +337,7 @@ void MulticastReceiverSender::Thread(Thread_args* arg){
 		// else see if there are any in datamodel to grab
 		std::unique_lock<std::mutex> locker(*m_args->out_queue_mtx);
 		if(!m_args->out_queue->empty()){
-			printf("fetching new outgoing %s messages\n",m_args->m_tool_name.c_str());
+			//printf("%s fetching new outgoing messages\n",m_args->m_tool_name.c_str());
 			std::swap(*m_args->out_queue, m_args->out_local_queue);
 			++(m_args->monitoring_vars->out_buffer_transfers);
 			m_args->out_i=0;

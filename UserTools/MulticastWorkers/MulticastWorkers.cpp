@@ -79,6 +79,9 @@ void MulticastWorkers::Thread(Thread_args* args){
 	std::unique_lock<std::mutex> locker(m_args->m_data->in_multicast_msg_queue_mtx);
 	if(!m_args->m_data->in_multicast_msg_queue.empty()){
 		std::swap(m_args->m_data->in_multicast_msg_queue, m_args->local_msg_queue);
+	} else {
+		usleep(100);
+		return;
 	}
 	locker.unlock();
 	
@@ -181,7 +184,7 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 	
 	// subsequently, all we need to do here is concatenate the JSONs
 	
-	printf("MulticastWorker job processing %d batches\n",m_args->msg_buffer->size());
+	printf("%s processing %d batches\n",m_args->m_job_name.c_str(), m_args->msg_buffer->size());
 	
 	*m_args->logging_buffer = "[";
 	*m_args->monitoring_buffer = "[";
@@ -199,7 +202,7 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 //		printf("validating first 9 chars are topic: '%s', %d\n",next_msg.substr(0,9).c_str(),strcmp(next_msg.substr(0,9).c_str(),"{\"topic\":"));
 		if(next_msg.substr(0,9)!="{\"topic\":"){
 			// FIXME log it as bad multicast
-			printf("Ignoring Bad multicast message '%s'\n",next_msg.c_str());
+			printf("%s ignoring bad multicast message '%s'\n",m_args->m_job_name.c_str(), next_msg.c_str());
 			continue;
 		}
 		
@@ -217,13 +220,13 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 				m_args->out_buffer = m_args->plotlyplot_buffer;
 				break;
 			default:
-				printf("MCworkerJob: unknown multicast topic '%c' in message '%s'\n",next_msg[10],next_msg);
+				printf("%s unknown multicast topic '%c' in message '%s'\n",m_args->m_job_name.c_str(), next_msg[10],next_msg.c_str());
 				continue; // FIXME unknown topic: error log it.
 		}
 		
 		if(m_args->out_buffer->length()>1) (*m_args->out_buffer) += ", ";
 		(*m_args->out_buffer) += next_msg;
-		printf("added message '%s'\n",next_msg.c_str());
+		printf("%s added message '%s'\n",m_args->m_job_name.c_str(), next_msg.c_str());
 		
 		++(m_args->monitoring_vars->msgs_processed);
 		
@@ -234,7 +237,7 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 		*m_args->logging_buffer += "]";
 		std::unique_lock<std::mutex> locker(m_args->m_data->log_query_queue_mtx);
 		m_args->m_data->log_query_queue.push_back(m_args->logging_buffer);
-		printf("multicast worker adding '%s' to logging buffer\n",m_args->logging_buffer->c_str());
+		printf("%s adding '%s' to logging buffer\n",m_args->m_job_name.c_str(), m_args->logging_buffer->c_str());
 	}
 	
 	if(m_args->monitoring_buffer->length()!=1){

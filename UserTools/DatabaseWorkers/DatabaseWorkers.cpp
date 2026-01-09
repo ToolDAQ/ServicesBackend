@@ -231,7 +231,10 @@ void DatabaseWorkers::Thread(Thread_args* args){
 	   job_data->rootplot_queue.empty() &&
 	   job_data->plotlyplot_queue.empty() &&
 	   job_data->write_queue.empty() &&
-	   job_data->read_queue.empty()) return;
+	   job_data->read_queue.empty()){
+		usleep(100);
+		return;
+	}
 	
 	printf("DbJobDistributor making db job!\n");
 	job_data->m_job_name = "database_worker";

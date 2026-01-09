@@ -78,7 +78,7 @@ void Monitoring::Thread(Thread_args* args){
 	
 	for(std::pair<const std::string, MonitoringVariables*>& mon : m_args->m_data->monitoring_variables){
 		
-		std::string s="{\"time\":0, \"device\":\"middleman\",\"subject\":\""+mon.first+"\", \"data\":"+mon.second->GetJSON()+"}";
+		std::string s="{\"topic\":\"Monitoring\", \"time\":\"now()\", \"device\":\"middleman\",\"subject\":\""+mon.first+"\", \"data\":"+mon.second->GetJSON()+"}";
 		
 		// FIXME or just put into received queue for insertion to DB?
 		std::unique_lock<std::mutex> locker(m_args->m_data->out_mon_msg_queue_mtx);

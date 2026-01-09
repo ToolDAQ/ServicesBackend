@@ -28,6 +28,7 @@ class MonitoringVariables {
 		std::string ret;
 		vars >> ret;
 		std::string ret2 = toJSON();
+		if(ret.length()==2) return ret2; // if nothing in Store, return result from toJSON
 		if(!ret2.empty()){
 			ret.pop_back(); // remove trailing '}'
 			ret2[0]=','; // replace leading '{' with ',' to concatenate the two

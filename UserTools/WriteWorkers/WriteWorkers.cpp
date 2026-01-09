@@ -69,6 +69,9 @@ void WriteWorkers::Thread(Thread_args* args){
 	std::unique_lock<std::mutex> locker(m_args->m_data->write_msg_queue_mtx);
 	if(!m_args->m_data->write_msg_queue.empty()){
 		std::swap(m_args->m_data->write_msg_queue, m_args->local_msg_queue);
+	} else {
+		usleep(100);
+		return;
 	}
 	locker.unlock();
 	
