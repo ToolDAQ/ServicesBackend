@@ -73,8 +73,7 @@ bool WriteQueryReceiver::Initialise(std::string configfile, DataModel &data){
 	thread_args.m_data = m_data;
 	thread_args.m_tool_name = m_tool_name;
 	thread_args.monitoring_vars = &monitoring_vars;
-	thread_args.socket = managed_socket->socket;
-	thread_args.socket_mtx = &managed_socket->socket_mtx; // for sharing socket with SocketManager
+	thread_args.mgd_sock = managed_socket;
 	thread_args.poll_timeout_ms = poll_timeout_ms;
 	thread_args.poll = zmq::pollitem_t{*managed_socket->socket, 0, ZMQ_POLLIN, 0};
 	thread_args.in_local_queue = m_data->querybatch_pool.GetNew(local_buffer_size);
@@ -85,7 +84,7 @@ bool WriteQueryReceiver::Initialise(std::string configfile, DataModel &data){
 	
 	// thread needs a unique name
 	if(!m_data->utils.CreateThread("write_query_receiver", &Thread, &thread_args)){
-		Log(m_tool_name+": Failed to spawn background thread",v_error,m_verbose);
+		Log("Failed to spawn background thread",v_error,m_verbose);
 		return false;
 	}
 	m_data->num_threads++;
@@ -96,7 +95,7 @@ bool WriteQueryReceiver::Initialise(std::string configfile, DataModel &data){
 bool WriteQueryReceiver::Execute(){
 	
 	if(!thread_args.running){
-		Log(m_tool_name+" Execute found thread not running!",v_error);
+		Log("Execute found thread not running!",v_error);
 		Finalise();
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		++(monitoring_vars.thread_crashes);
@@ -117,9 +116,9 @@ bool WriteQueryReceiver::Execute(){
 bool WriteQueryReceiver::Finalise(){
 	
 	// signal background receiver thread to stop
-	Log(m_tool_name+": Joining receiver thread",v_warning);
+	Log("Joining receiver thread",v_warning);
 	m_data->utils.KillThread(&thread_args);
-	std::cerr<<"WriteReceiver thread terminated"<<std::endl;
+	Log("receiver thread terminated",v_warning);
 	m_data->num_threads--;
 	
 	if(m_data->managed_sockets.count(remote_port_name)){
@@ -134,7 +133,7 @@ bool WriteQueryReceiver::Finalise(){
 	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
 	m_data->monitoring_variables.erase(m_tool_name);
 	
-	Log(m_tool_name+": Finished",v_warning);
+	Log("Finished",v_warning);
 	return true;
 }
 
@@ -151,7 +150,9 @@ void WriteQueryReceiver::Thread(Thread_args* args){
 			
 			if(!m_args->make_new) m_args->in_local_queue->queries.pop_back();
 			
-			printf("%s adding %ld messages to datamodel\n",m_args->m_tool_name.c_str(),m_args->in_local_queue->queries.size());
+			//printf("%s adding %ld messages to datamodel\n",m_args->m_tool_name.c_str(),m_args->in_local_queue->queries.size());
+			
+			//m_args->in_local_queue->push_time("receiver_to_DM");
 			
 			std::unique_lock<std::mutex> locker(m_args->m_data->write_msg_queue_mtx);
 			m_args->m_data->write_msg_queue.push_back(m_args->in_local_queue);
@@ -171,8 +172,11 @@ void WriteQueryReceiver::Thread(Thread_args* args){
 	// poll
 	// ====
 	try {
-		
-		std::unique_lock<std::mutex> locker(*m_args->socket_mtx);
+		// give priority to socketmanager
+		while(m_args->mgd_sock->socket_manager_request){
+			usleep(1);
+		}
+		std::unique_lock<std::mutex> locker(m_args->mgd_sock->socket_mtx);
 		m_args->get_ok = zmq::poll(&m_args->poll, 1, m_args->poll_timeout_ms);
 		
 		if(m_args->get_ok<0){
@@ -204,7 +208,7 @@ void WriteQueryReceiver::Thread(Thread_args* args){
 	// read
 	// ====
 	if(m_args->poll.revents & ZMQ_POLLIN){
-		printf("%s receiving message\n",m_args->m_tool_name.c_str());
+		//printf("%s receiving message\n",m_args->m_tool_name.c_str());
 		
 		if(m_args->make_new){
 			m_args->in_local_queue->queries.emplace_back();
@@ -217,16 +221,20 @@ void WriteQueryReceiver::Thread(Thread_args* args){
 		static constexpr char part_order[4] = {2,0,1,3};
 		m_args->msg_parts=0;
 		
+		// for debug only
+		//msg_buf.times.clear();
+		//msg_buf.push_time("receive");
+		
 		try {
 			
-			std::unique_lock<std::mutex> locker(*m_args->socket_mtx);
-			printf("%s receiving part...",m_args->m_tool_name.c_str());
+			std::unique_lock<std::mutex> locker(m_args->mgd_sock->socket_mtx);
+			//printf("%s receiving part...",m_args->m_tool_name.c_str());
 			do {
-				m_args->get_ok = m_args->socket->recv(&msg_buf[part_order[std::min(3,m_args->msg_parts++)]]);
-				printf("%d=%d (more: %d),...",m_args->msg_parts,m_args->get_ok,msg_buf[part_order[std::min(3,m_args->msg_parts-1)]].more());
+				m_args->get_ok = m_args->mgd_sock->socket->recv(&msg_buf[part_order[std::min(3,m_args->msg_parts++)]]);
+				//printf("%d=%d (more: %d),...",m_args->msg_parts,m_args->get_ok,msg_buf[part_order[std::min(3,m_args->msg_parts-1)]].more());
 			} while(m_args->get_ok && msg_buf[part_order[std::min(3,m_args->msg_parts-1)]].more());
 			locker.unlock();
-			printf("\n");
+			//printf("\n");
 			
 			// if receive failed, discard the message
 			if(!m_args->get_ok){
@@ -255,7 +263,8 @@ void WriteQueryReceiver::Thread(Thread_args* args){
 			// else success
 			m_args->make_new=true;
 			++(m_args->monitoring_vars->msgs_rcvd);
-			printf("%s received query %u, '%s' message '%s' into ZmqQuery at %p, %p\n",m_args->m_tool_name.c_str(), msg_buf.msg_id(), msg_buf.topic().data(), msg_buf.msg().data(), &msg_buf, &msg_buf.parts[3]);
+			// XXX
+			//printf("%s received query %u, '%s' message '%s' into ZmqQuery at %p\n",m_args->m_tool_name.c_str(), msg_buf.msg_id(), msg_buf.topic().data(), msg_buf.msg().data(), &msg_buf);
 			
 		} catch(zmq::error_t& err){
 			// receive aborted due to signals?

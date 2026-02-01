@@ -25,8 +25,10 @@ bool Monitoring::Initialise(std::string configfile, DataModel &data){
 	thread_args.last_send = std::chrono::steady_clock::now();
 	thread_args.m_data = m_data;
 	thread_args.monitoring_vars = &monitoring_vars;
+	thread_mtx.lock();
+	thread_args.thread_mtx = &thread_mtx;
 	if(!m_data->utils.CreateThread("monitoring", &Thread, &thread_args)){
-		Log(m_tool_name+": Failed to spawn background thread",v_error,m_verbose);
+		Log("Failed to spawn background thread",v_error,m_verbose);
 		return false;
 	}
 	m_data->num_threads++;
@@ -40,7 +42,7 @@ bool Monitoring::Initialise(std::string configfile, DataModel &data){
 bool Monitoring::Execute(){
 	
 	if(!thread_args.running){
-		Log(m_tool_name+" Execute found thread not running!",v_error);
+		Log("Execute found thread not running!",v_error);
 		Finalise();
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		// FIXME if restarts > X times in last Y mins, alarm (bypass, shove into DB? send to websocket?) and StopLoop.
@@ -54,14 +56,17 @@ bool Monitoring::Execute(){
 bool Monitoring::Finalise(){
 	
 	// signal job distributor thread to stop
-	Log(m_tool_name+": Joining monitoring thread",v_warning);
+	Log("Joining monitoring thread",v_warning);
+	thread_args.running=false;
+	thread_mtx.unlock();
 	m_data->utils.KillThread(&thread_args);
+	Log("thread joined",v_warning);
 	m_data->num_threads--;
 	
 	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
 	m_data->monitoring_variables.erase(m_tool_name);
 	
-	Log(m_tool_name+": Finished",v_warning);
+	Log("Finished",v_warning);
 	return true;
 }
 
@@ -72,7 +77,7 @@ void Monitoring::Thread(Thread_args* args){
 	Monitoring_args* m_args = dynamic_cast<Monitoring_args*>(args);
 	
 	m_args->last_send = std::chrono::steady_clock::now();
-	//printf("Monitoring sending stats\n");
+	printf("Monitoring sending stats\n");
 	
 	std::unique_lock<std::mutex> locker(m_args->m_data->monitoring_variables_mtx);
 	
@@ -80,11 +85,13 @@ void Monitoring::Thread(Thread_args* args){
 		
 		std::string s="{\"topic\":\"Monitoring\", \"time\":\"now()\", \"device\":\"middleman\",\"subject\":\""+mon.first+"\", \"data\":"+mon.second->GetJSON()+"}";
 		
-		// FIXME or just put into received queue for insertion to DB?
-		std::unique_lock<std::mutex> locker(m_args->m_data->out_mon_msg_queue_mtx);
+		// use multicast so it also not only goes to DB but also shows up on web services
+		std::unique_lock<std::mutex> locker2(m_args->m_data->out_mon_msg_queue_mtx);
 		m_args->m_data->out_mon_msg_queue.push_back(s);
 		
 	}
+	
+	locker.unlock();
 	
 	/*
 	// FIXME calculate rates and stuff, expand monitoring in Tools
@@ -192,7 +199,10 @@ void Monitoring::Thread(Thread_args* args){
 	
 	*/
 	
-	std::this_thread::sleep_until(m_args->last_send+m_args->monitoring_period_ms);
+	//std::this_thread::sleep_until(m_args->last_send+m_args->monitoring_period_ms);
+	// interruptible sleep - breaks early if Tool unlocks thread_mtx
+	std::unique_lock<std::timed_mutex> timed_locker(*m_args->thread_mtx, std::defer_lock);
+	timed_locker.try_lock_until(m_args->last_send+m_args->monitoring_period_ms);
 	
 	return;
 }

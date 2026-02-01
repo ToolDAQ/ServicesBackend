@@ -7,6 +7,7 @@
 
 struct ManagedSocket {
 	std::mutex socket_mtx;
+	bool socket_manager_request=false;
 	zmq::socket_t* socket=nullptr;
 	std::string service_name;
 /*	std::string remote_port;*/

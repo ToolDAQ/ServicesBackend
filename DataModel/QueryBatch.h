@@ -2,6 +2,7 @@
 #define QUERY_BATCH_H
 
 #include <vector>
+#include <chrono>
 
 #include "ZmqQuery.h"
 
@@ -38,6 +39,9 @@ struct QueryBatch {
 	std::string calibration_batch_err;
 	std::string plotlyplot_batch_err;
 	std::string rootplot_batch_err;
+	
+	// for debug
+	void push_time(std::string_view s){ for(auto&& query : queries) query.push_time(s); }
 	
 	void reset(){
 		alarm_buffer = "[";

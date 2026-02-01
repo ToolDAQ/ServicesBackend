@@ -5,6 +5,7 @@
 #include <iostream>
 #include <sstream>
 #include <chrono>
+#include <thread>
 
 #include "Tool.h"
 #include "DataModel.h"
@@ -27,6 +28,7 @@ struct Monitoring_args : public Thread_args {
 	std::chrono::time_point<std::chrono::steady_clock> last_send;
 	std::chrono::milliseconds monitoring_period_ms;
 	std::stringstream ss;
+	std::timed_mutex* thread_mtx;
 	
 };
 
@@ -41,6 +43,8 @@ class Monitoring: public Tool {
 	static void Thread(Thread_args* args);
 	Monitoring_args thread_args;
 	MonitoringMonitoring monitoring_vars;
+	
+	std::timed_mutex thread_mtx;
 	
 	static bool ResetStats(bool reset);
 	

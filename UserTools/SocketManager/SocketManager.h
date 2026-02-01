@@ -1,6 +1,7 @@
 #ifndef SocketManager_H
 #define SocketManager_H
 
+#include <mutex>
 #include <iostream>
 
 #include "Tool.h"
@@ -27,6 +28,8 @@ struct SocketManager_args : public Thread_args {
 	std::chrono::time_point<std::chrono::steady_clock> last_update;
 	std::chrono::milliseconds update_period_ms;
 	
+	std::timed_mutex* thread_mtx;
+	
 };
 
 class SocketManager: public Tool {
@@ -42,6 +45,8 @@ class SocketManager: public Tool {
 	static void Thread(Thread_args* args);
 	SocketManager_args thread_args;
 	SocketManagerMonitoring monitoring_vars;
+	
+	std::timed_mutex thread_mtx;
 	
 };
 

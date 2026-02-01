@@ -1,6 +1,7 @@
 #ifndef ZMQ_QUERY_H
 #define ZMQ_QUERY_H
 
+#include <chrono> // for debug
 #include <zmq.hpp>
 #include <pqxx/pqxx>
 
@@ -67,14 +68,14 @@ struct ZmqQuery {
 	
 	// for setting responses of read queries
 	void setresponserows(size_t n_rows){
-		printf("ZmqQuery at %p set to %lu response rows\n",this, n_rows);
+		//printf("ZmqQuery at %p set to %lu response rows\n",this, n_rows);
 		parts.resize(3+n_rows);
 		return;
 	}
 	
 	void setresponse(size_t row_num, std::string_view val){
 		//zmq_msg_init_size(&parts[row_num+3],row.size()); // mismatch zmq_msg_t* / zmq::message_t
-		printf("response part %lu set to %s on ZmqQuery at %p\n", row_num, val.data(), this);
+		//printf("response part %lu set to %s on ZmqQuery at %p\n", row_num, val.data(), this);
 		new(&parts[row_num+3]) zmq::message_t(val.size()); // FIXME better way to call zmq_msg_init_size
 		memcpy((void*)parts[row_num+3].data(),val.data(),val.size());
 		return;
@@ -86,14 +87,27 @@ struct ZmqQuery {
 		//zmq_msg_init_size(&parts[row_num+3],row.size()); // mismatch zmq_msg_t* / zmq::message_t
 		
 		// what a mess. but only printf bypasses our great overlord's wonderful logging decorations
-		std::ostringstream oss;
-		oss << val;
-		printf("response part %lu set to %s on ZmqQuery at %p\n", row_num, oss.str().c_str(), this);
+		//std::ostringstream oss;
+		//oss << val;
+		//printf("response part %lu set to %s on ZmqQuery at %p\n", row_num, oss.str().c_str(), this);
 		
 		new(&parts[row_num+3]) zmq::message_t(sizeof(val)); // FIXME better way to call zmq_msg_init_size
 		memcpy((void*)parts[row_num+3].data(),&val,sizeof(val));
 		return;
 	}
+	
+	// FOR DEBUG
+	// ---------
+	std::vector<std::pair<std::string,std::chrono::time_point<std::chrono::system_clock>>> times;
+	void push_time(std::string_view s){ times.emplace_back(s, std::chrono::system_clock::now()); }
+	void print_times(){
+		push_time("reply_send");
+		for(size_t i=1; i<times.size(); ++i){
+			printf("%s -> %s: %u ",times[i-1].first.c_str(), times[i].first.c_str(), std::chrono::duration_cast<std::chrono::milliseconds>(times[i].second-times[i-1].second).count());
+		}
+		printf("\n");
+	}
+	// ---------
 	
 };
 

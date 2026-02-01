@@ -24,8 +24,7 @@ struct WriteQueryReceiver_args : public Thread_args {
 	std::string m_tool_name;
 	DataModel* m_data;
 	WriteReceiveMonitoring* monitoring_vars;
-	zmq::socket_t* socket=nullptr;
-	std::mutex* socket_mtx; // for sharing the socket with ServicesManager Tool for finding clients
+	ManagedSocket* mgd_sock=nullptr;
 	
 	int poll_timeout_ms;
 	zmq::pollitem_t poll;

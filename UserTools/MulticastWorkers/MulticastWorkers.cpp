@@ -30,7 +30,7 @@ bool MulticastWorkers::Initialise(std::string configfile, DataModel &data){
 	thread_args.monitoring_vars = &monitoring_vars;
 	// thread needs a unique name
 	if(!m_data->utils.CreateThread("multicast_job_distributor", &Thread, &thread_args)){
-		Log(m_tool_name+": Failed to spawn background thread",v_error,m_verbose);
+		Log("Failed to spawn background thread",v_error,m_verbose);
 		return false;
 	}
 	m_data->num_threads++;
@@ -43,7 +43,7 @@ bool MulticastWorkers::Execute(){
 	// FIXME ok but actually this kills all our jobs, not just our job distributor
 	// so we don't want to do that.
 	if(!thread_args.running){
-		Log(m_tool_name+" Execute found thread not running!",v_error);
+		Log("Execute found thread not running!",v_error);
 		Finalise();
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		++(monitoring_vars.thread_crashes);
@@ -55,7 +55,7 @@ bool MulticastWorkers::Execute(){
 bool MulticastWorkers::Finalise(){
 	
 	// signal job distributor thread to stop
-	Log(m_tool_name+": Joining receiver thread",v_warning);
+	Log("Joining receiver thread",v_warning);
 	m_data->utils.KillThread(&thread_args);
 	m_data->num_threads--;
 	
@@ -65,7 +65,7 @@ bool MulticastWorkers::Finalise(){
 	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
 	m_data->monitoring_variables.erase(m_tool_name);
 	
-	Log(m_tool_name+": Finished",v_warning);
+	Log("Finished",v_warning);
 	return true;
 }
 
@@ -80,6 +80,7 @@ void MulticastWorkers::Thread(Thread_args* args){
 	if(!m_args->m_data->in_multicast_msg_queue.empty()){
 		std::swap(m_args->m_data->in_multicast_msg_queue, m_args->local_msg_queue);
 	} else {
+		locker.unlock();
 		usleep(100);
 		return;
 	}
@@ -118,7 +119,7 @@ void MulticastWorkers::Thread(Thread_args* args){
 		the_job->fail_func = MulticastMessageFail;
 		
 		//multicast_jobs.AddJob(the_job);
-		printf("spawning new multicastjob for %d messages\n",job_data->msg_buffer->size());
+		//printf("spawning new multicastjob for %d messages\n",job_data->msg_buffer->size());
 		m_args->m_data->job_queue.AddJob(the_job);
 		
 	}
@@ -184,7 +185,7 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 	
 	// subsequently, all we need to do here is concatenate the JSONs
 	
-	printf("%s processing %d batches\n",m_args->m_job_name.c_str(), m_args->msg_buffer->size());
+	//printf("%s processing %d batches\n",m_args->m_job_name.c_str(), m_args->msg_buffer->size());
 	
 	*m_args->logging_buffer = "[";
 	*m_args->monitoring_buffer = "[";
@@ -226,7 +227,7 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 		
 		if(m_args->out_buffer->length()>1) (*m_args->out_buffer) += ", ";
 		(*m_args->out_buffer) += next_msg;
-		printf("%s added message '%s'\n",m_args->m_job_name.c_str(), next_msg.c_str());
+		//printf("%s added message '%s'\n",m_args->m_job_name.c_str(), next_msg.c_str());
 		
 		++(m_args->monitoring_vars->msgs_processed);
 		
@@ -237,7 +238,7 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 		*m_args->logging_buffer += "]";
 		std::unique_lock<std::mutex> locker(m_args->m_data->log_query_queue_mtx);
 		m_args->m_data->log_query_queue.push_back(m_args->logging_buffer);
-		printf("%s adding '%s' to logging buffer\n",m_args->m_job_name.c_str(), m_args->logging_buffer->c_str());
+		//printf("%s adding '%s' to logging buffer\n",m_args->m_job_name.c_str(), m_args->logging_buffer->c_str());
 	}
 	
 	if(m_args->monitoring_buffer->length()!=1){
@@ -262,7 +263,7 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 	m_args->msg_buffer->clear();
 	m_args->m_data->multicast_buffer_pool.Add(m_args->msg_buffer);
 	
-	printf("%s job completed\n",m_args->m_job_name.c_str());
+	//printf("%s job completed\n",m_args->m_job_name.c_str());
 	++(m_args->monitoring_vars->jobs_completed);
 	
 	m_args->m_pool->Add(m_args);  // return our job args to the job args struct pool

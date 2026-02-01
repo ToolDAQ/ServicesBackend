@@ -29,9 +29,11 @@ bool SocketManager::Initialise(std::string configfile, DataModel &data){
 	thread_args.daq_utils = &daq_utils;
 	thread_args.update_period_ms = std::chrono::milliseconds{update_ms};
 	thread_args.last_update = std::chrono::steady_clock::now();
+	thread_mtx.lock();
+	thread_args.thread_mtx = &thread_mtx;
 	
 	if(!m_data->utils.CreateThread("socket_manager", &Thread, &thread_args)){
-		Log(m_tool_name+": Failed to spawn background thread",v_error,m_verbose);
+		Log("Failed to spawn background thread",v_error,m_verbose);
 		return false;
 	}
 	m_data->num_threads++;
@@ -45,7 +47,7 @@ bool SocketManager::Initialise(std::string configfile, DataModel &data){
 bool SocketManager::Execute(){
 	
 	if(!thread_args.running){
-		Log(m_tool_name+" Execute found thread not running!",v_error);
+		Log("Execute found thread not running!",v_error);
 		Finalise();
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		++(monitoring_vars.thread_crashes);
@@ -58,14 +60,16 @@ bool SocketManager::Execute(){
 bool SocketManager::Finalise(){
 	
 	// signal job distributor thread to stop
-	Log(m_tool_name+": Joining socket manager thread",v_warning);
+	Log("Joining socket manager thread",v_warning);
+	thread_args.running=false;
+	thread_mtx.unlock();
 	m_data->utils.KillThread(&thread_args);
 	m_data->num_threads--;
 	
 	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
 	m_data->monitoring_variables.erase(m_tool_name);
 	
-	Log(m_tool_name+": Finished",v_warning);
+	Log("Finished",v_warning);
 	return true;
 }
 
@@ -73,8 +77,8 @@ void SocketManager::Thread(Thread_args* args){
 	
 	SocketManager_args* m_args = dynamic_cast<SocketManager_args*>(args);
 	
+	//printf("SocketManager checking for new clients after %lu ms\n",std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-m_args->last_update).count());
 	m_args->last_update = std::chrono::steady_clock::now();
-	//printf("SocketManager checking for new clients\n");
 	
 	bool new_clients=false;
 	
@@ -83,12 +87,18 @@ void SocketManager::Thread(Thread_args* args){
 		
 		ManagedSocket* sock = mgd_sock.second;
 		
-		std::unique_lock<std::mutex> locker(sock->socket_mtx);
+		std::unique_lock<std::mutex> locker(sock->socket_mtx, std::defer_lock);
+		if(!locker.try_lock()){
+			sock->socket_manager_request=true;
+			locker.lock();
+			sock->socket_manager_request=false;
+		}
+		
 		int new_conn_count = std::abs((long long int)sock->connections.size() - m_args->daq_utils->UpdateConnections(sock->service_name, sock->socket, sock->connections, "", sock->remote_port_name));
 		locker.unlock();
 		
 		if(new_conn_count!=0){
-			//m_args->m_data->services->SendLog(m_tool_name+": "+std::to_string(std::abs(new_conn_count))+" new connections to "+sock->service_name, v_message); // FIXME logging
+			//m_args->m_data->services->SendLog(std::to_string(std::abs(new_conn_count))+" new connections to "+sock->service_name, v_message); // FIXME logging
 			printf("%d new %s connections made!\n",new_conn_count, sock->remote_port_name.c_str());
 			new_clients = true;
 			
@@ -121,7 +131,9 @@ void SocketManager::Thread(Thread_args* args){
 		
 	}
 	
-	std::this_thread::sleep_until(m_args->last_update+m_args->update_period_ms);
+	//std::this_thread::sleep_until(m_args->last_update+m_args->update_period_ms);
+	std::unique_lock<std::timed_mutex> timed_locker(*m_args->thread_mtx, std::defer_lock);
+	timed_locker.try_lock_until(m_args->last_update+m_args->update_period_ms);
 	
 	return;
 	

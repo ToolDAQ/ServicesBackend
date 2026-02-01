@@ -21,7 +21,7 @@ bool WriteWorkers::Initialise(std::string configfile, DataModel &data){
 	thread_args.m_data = m_data;
 	thread_args.monitoring_vars = &monitoring_vars;
 	if(!m_data->utils.CreateThread("write_job_distributor", &Thread, &thread_args)){
-		Log(m_tool_name+": Failed to spawn background thread",v_error,m_verbose);
+		Log("Failed to spawn background thread",v_error,m_verbose);
 		return false;
 	}
 	m_data->num_threads++;
@@ -35,7 +35,7 @@ bool WriteWorkers::Execute(){
 	// FIXME ok but actually this kills all our jobs, not just our job distributor
 	// so we don't want to do that.
 	if(!thread_args.running){
-		Log(m_tool_name+" Execute found thread not running!",v_error);
+		Log("Execute found thread not running!",v_error);
 		Finalise();
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		++(monitoring_vars.thread_crashes);
@@ -48,14 +48,14 @@ bool WriteWorkers::Execute(){
 bool WriteWorkers::Finalise(){
 	
 	// signal job distributor thread to stop
-	Log(m_tool_name+": Joining job distributor thread",v_warning);
+	Log("Joining job distributor thread",v_warning);
 	m_data->utils.KillThread(&thread_args);
 	m_data->num_threads--;
 	
 	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
 	m_data->monitoring_variables.erase(m_tool_name);
 	
-	Log(m_tool_name+": Finished",v_warning);
+	Log("Finished",v_warning);
 	return true;
 }
 
@@ -70,6 +70,7 @@ void WriteWorkers::Thread(Thread_args* args){
 	if(!m_args->m_data->write_msg_queue.empty()){
 		std::swap(m_args->m_data->write_msg_queue, m_args->local_msg_queue);
 	} else {
+		locker.unlock();
 		usleep(100);
 		return;
 	}
@@ -99,11 +100,12 @@ void WriteWorkers::Thread(Thread_args* args){
 		job_data->local_msg_queue = m_args->local_msg_queue[i];
 		job_data->m_job_name = "write_worker";
 		
-		printf("spawning %s job\n", job_data->m_job_name.c_str());
+		//printf("spawning %s job\n", job_data->m_job_name.c_str());
 		the_job->func = WriteMessageJob;
 		the_job->fail_func = WriteMessageFail;
 		
 		m_args->m_data->job_queue.AddJob(the_job);
+		//job_data->local_msg_queue->push_time("write_job_push");
 		
 	}
 	
@@ -151,7 +153,9 @@ bool WriteWorkers::WriteMessageJob(void*& arg){
 	
 	WriteJobStruct* m_args = static_cast<WriteJobStruct*>(arg);
 	
-	printf("%s job processing %d queries\n", m_args->m_job_name.c_str(), m_args->local_msg_queue->queries.size());
+	//m_args->local_msg_queue->push_time("writeworker_start");
+	
+	//printf("%s job processing %d queries\n", m_args->m_job_name.c_str(), m_args->local_msg_queue->queries.size());
 	
 	m_args->local_msg_queue->reset();
 	
@@ -212,12 +216,14 @@ bool WriteWorkers::WriteMessageJob(void*& arg){
 	// add closing ']' to any batch queries
 	m_args->local_msg_queue->close();
 	
+	//m_args->local_msg_queue->push_time("writeworker_done");
+	
 	// pass the batch onto the next stage of the pipeline for the DatabaseWorkers
 	std::unique_lock<std::mutex> locker(m_args->m_data->write_query_queue_mtx);
 	m_args->m_data->write_query_queue.push_back(m_args->local_msg_queue);
 	locker.unlock();
 	
-	printf("%s queueing processed querybatch\n",m_args->m_job_name.c_str());
+	//printf("%s queueing processed querybatch\n",m_args->m_job_name.c_str());
 	++(m_args->monitoring_vars->jobs_completed);
 	
 	// return our job args to the pool

@@ -21,7 +21,7 @@ bool ResultWorkers::Initialise(std::string configfile, DataModel &data){
 	thread_args.m_data = m_data;
 	thread_args.monitoring_vars = &monitoring_vars;
 	if(!m_data->utils.CreateThread("result_job_distributor", &Thread, &thread_args)){
-		Log(m_tool_name+": Failed to spawn background thread",v_error,m_verbose);
+		Log("Failed to spawn background thread",v_error,m_verbose);
 		return false;
 	}
 	m_data->num_threads++;
@@ -35,7 +35,7 @@ bool ResultWorkers::Execute(){
 	// FIXME ok but actually this kills all our jobs, not just our job distributor
 	// so we don't want to do that.
 	if(!thread_args.running){
-		Log(m_tool_name+" Execute found thread not running!",v_error);
+		Log("Execute found thread not running!",v_error);
 		Finalise();
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		++(monitoring_vars.thread_crashes);
@@ -48,14 +48,14 @@ bool ResultWorkers::Execute(){
 bool ResultWorkers::Finalise(){
 	
 	// signal job distributor thread to stop
-	Log(m_tool_name+": Joining receiver thread",v_warning);
+	Log("Joining receiver thread",v_warning);
 	m_data->utils.KillThread(&thread_args);
 	m_data->num_threads--;
 	
 	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
 	m_data->monitoring_variables.erase(m_tool_name);
 	
-	Log(m_tool_name+": Finished",v_warning);
+	Log("Finished",v_warning);
 	return true;
 }
 
@@ -67,6 +67,7 @@ void ResultWorkers::Thread(Thread_args* args){
 	// grab a batch of read queries, with results awaiting conversion
 	std::unique_lock<std::mutex> locker(m_args->m_data->query_results_mtx);
 	if(m_args->m_data->query_results.empty()){
+		locker.unlock();
 		usleep(100);
 		return;
 	}
@@ -96,6 +97,8 @@ void ResultWorkers::Thread(Thread_args* args){
 		ResultJobStruct* job_data = static_cast<ResultJobStruct*>(the_job->data);
 		job_data->batch = m_args->local_msg_queue[i];
 		job_data->m_job_name = "result_worker";
+		
+		//job_data->batch->push_time("result_job_push");
 		
 		m_args->m_data->job_queue.AddJob(the_job);
 		
@@ -133,6 +136,7 @@ void ResultWorkers::ResultJobFail(void*& arg){
 bool ResultWorkers::ResultJob(void*& arg){
 	
 	ResultJobStruct* m_args = reinterpret_cast<ResultJobStruct*>(arg);
+	//m_args->batch->push_time("result_worker_start");
 	
 	// for now each job processes a batch, not a set of batches
 	//for(QueryBatch* batch : m_args->local_msg_queue){
@@ -325,6 +329,8 @@ bool ResultWorkers::ResultJob(void*& arg){
 			
 		} // if/else on whether this batch was read/write
 		
+		//m_args->batch->push_time("result_done");
+		
 //	} // loop over query batches
 	
 	// pass the batch onto the next stage of the pipeline for the DatabaseWorkers
@@ -334,7 +340,7 @@ bool ResultWorkers::ResultJob(void*& arg){
 	m_args->m_data->query_replies.push_back(m_args->batch);
 	locker.unlock();
 	
-	printf("%s completed\n",m_args->m_job_name.c_str());
+	//printf("%s completed\n",m_args->m_job_name.c_str());
 	++(m_args->monitoring_vars->jobs_completed);
 	
 	// return our job args to the pool

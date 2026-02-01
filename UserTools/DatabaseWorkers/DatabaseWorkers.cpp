@@ -61,7 +61,7 @@ bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 	thread_args.monitoring_vars = &monitoring_vars;
 	thread_args.job_queue = &database_jobqueue;
 	if(!m_data->utils.CreateThread("database_job_distributor", &Thread, &thread_args)){
-		Log(m_tool_name+": Failed to spawn background thread",v_error,m_verbose);
+		Log("Failed to spawn background thread",v_error,m_verbose);
 		return false;
 	}
 	m_data->num_threads++;
@@ -117,7 +117,7 @@ bool DatabaseWorkers::Execute(){
 	// FIXME ok but actually this kills all our jobs, not just our job distributor
 	// so we don't want to do that.
 	if(!thread_args.running){
-		Log(m_tool_name+" Execute found thread not running!",v_error);
+		Log("Execute found thread not running!",v_error);
 		Finalise();
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		++(monitoring_vars.thread_crashes);
@@ -130,13 +130,13 @@ bool DatabaseWorkers::Execute(){
 bool DatabaseWorkers::Finalise(){
 	
 	// signal job distributor thread to stop
-	Log(m_tool_name+": Joining job distributor thread",v_warning);
+	Log("Joining job distributor thread",v_warning);
 	m_data->utils.KillThread(&thread_args);
-	Log(m_tool_name+": Finished",v_warning);
+	Log("Finished",v_warning);
 	m_data->num_threads--;
 	
 	// deleting the worker pool manager will kill all the worker threads
-	Log(m_tool_name+": Joining database worker thread pool",v_warning);
+	Log("Joining database worker thread pool",v_warning);
 	delete job_manager;
 	job_manager = nullptr;
 	m_data->num_threads--;
@@ -144,7 +144,7 @@ bool DatabaseWorkers::Finalise(){
 	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
 	m_data->monitoring_variables.erase(m_tool_name);
 	
-	Log(m_tool_name+": Finished",v_warning);
+	Log("Finished",v_warning);
 	
 	return true;
 }
@@ -188,7 +188,7 @@ void DatabaseWorkers::Thread(Thread_args* args){
 	std::unique_lock<std::mutex> locker(m_args->m_data->log_query_queue_mtx);
 	if(!m_args->m_data->log_query_queue.empty()){
 		std::swap(m_args->m_data->log_query_queue, job_data->logging_queue);
-		printf("DbJobDistributor grabbed %d log batches\n",job_data->logging_queue.size());
+		//printf("DbJobDistributor grabbed %d log batches\n",job_data->logging_queue.size());
 	}
 	
 	// grab monitoring queries
@@ -213,14 +213,14 @@ void DatabaseWorkers::Thread(Thread_args* args){
 	locker = std::unique_lock<std::mutex>(m_args->m_data->write_query_queue_mtx);
 	if(!m_args->m_data->write_query_queue.empty()){
 		std::swap(m_args->m_data->write_query_queue, job_data->write_queue);
-		printf("DbJobDistributor grabbed %d write query batches\n",job_data->write_queue.size());
+		//printf("DbJobDistributor grabbed %d write query batches\n",job_data->write_queue.size());
 	}
 	
 	// grab read queries
 	locker = std::unique_lock<std::mutex>(m_args->m_data->read_msg_queue_mtx);
 	if(!m_args->m_data->read_msg_queue.empty()){
 		std::swap(m_args->m_data->read_msg_queue, job_data->read_queue);
-		printf("DbJobDistributor grabbed %d read query batches\n",job_data->read_queue.size());
+		//printf("DbJobDistributor grabbed %d read query batches\n",job_data->read_queue.size());
 	}
 	
 	locker.unlock();
@@ -236,7 +236,7 @@ void DatabaseWorkers::Thread(Thread_args* args){
 		return;
 	}
 	
-	printf("DbJobDistributor making db job!\n");
+	//printf("DbJobDistributor making db job!\n");
 	job_data->m_job_name = "database_worker";
 	
 	m_args->job_queue->AddJob(m_args->the_job);
@@ -279,6 +279,9 @@ void DatabaseWorkers::DatabaseJobFail(void*& arg){
 	std::cerr<<m_args->m_job_name<<" failure"<<std::endl;
 	++(m_args->monitoring_vars->jobs_failed);
 	
+	//for(QueryBatch* q : m_args->read_queue) q->push_time("DB_spawn");
+	//for(QueryBatch* q : m_args->write_queue) q->push_time("DB_spawn");
+	
 	// return our job args to the pool
 	m_args->m_pool->Add(m_args);
 	m_args = nullptr;  // clear the local m_args variable... not strictly necessary
@@ -292,7 +295,9 @@ void DatabaseWorkers::DatabaseJobFail(void*& arg){
 bool DatabaseWorkers::DatabaseJob(void*& arg){
 	
 	DatabaseJobStruct* m_args = static_cast<DatabaseJobStruct*>(arg);
-	printf("DB worker starting!\n");
+	//printf("DB worker starting!\n");
+	//for(QueryBatch* q : m_args->read_queue) q->push_time("DB_start");
+	//for(QueryBatch* q : m_args->write_queue) q->push_time("DB_start");
 	
 	// the worker will need a connection to the database
 	thread_local std::unique_ptr<pqxx::connection> conn;
@@ -340,10 +345,10 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 	// XXX we could consider the latter, if it improved performance - the only drawback is we need to
 	// re-sumbit all remaining queries each time one errors, which is more overhead the more we submit.
 	pqxx::pipeline* px = new pqxx::pipeline(*tx);
-	printf("processing %d read query batches\n",m_args->read_queue.size());
+	//printf("processing %d read query batches\n",m_args->read_queue.size());
 	for(QueryBatch* batch : m_args->read_queue){
 		
-		printf("pipelining batch of %d read queries\n",batch->queries.size());
+		//printf("pipelining batch of %d read queries\n",batch->queries.size());
 		
 		// if a query in the pipeline fails, all subsequent queries will also fail
 		// so we'll need to go back and re-submit them.
@@ -409,9 +414,11 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 	// ok we're done with the pipeline: close it and detach, whatever that means.
 	px->complete();
 	
+	//for(QueryBatch* q : m_args->read_queue) q->push_time("DB_done");
+	
 	// might as well pass them out for distribution now
 	if(!m_args->read_queue.empty()){
-		printf("returning %d read replies to datamodel\n", m_args->read_queue.size());
+		//printf("returning %d read replies to datamodel\n", m_args->read_queue.size());
 		std::unique_lock<std::mutex> locker(m_args->m_data->query_results_mtx);
 		m_args->m_data->query_results.insert(m_args->m_data->query_results.end(),
 		                                     m_args->read_queue.begin(),m_args->read_queue.end());
@@ -444,7 +451,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 		
 		for(size_t i=0; i<m_args->last_i; ++i){
 			QueryBatch* batch = m_args->write_queue[i];
-			printf("executing %d generic queries for next batch\n",batch->generic_query_indices.size());
+			//printf("executing %d generic queries for next batch\n",batch->generic_query_indices.size());
 			size_t last_j = (m_args->endpoint==DatabaseJobStep::generics) ? m_args->endpoint_j : batch->generic_query_indices.size();
 			for(size_t j=m_args->checkpoint_j; j<last_j; ++j){
 				ZmqQuery& query = batch->queries[batch->generic_query_indices[j]];
@@ -478,11 +485,11 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 		// insert new logging statements
 		m_args->last_i = (m_args->endpoint==DatabaseJobStep::logging) ? m_args->endpoint_i : m_args->logging_queue.size();
 		
-		printf("calling prepped for %d logging batches\n",m_args->logging_queue.size());
+		//printf("calling prepped for %d logging batches\n",m_args->logging_queue.size());
 		for(size_t i=0; i<m_args->last_i; ++i){
 			if(m_args->bad_logs.count(i)) continue;
 			std::string* batch = m_args->logging_queue[i];
-			printf("dbworker inserting logging batch: '%s'\n",batch->c_str());
+			//printf("dbworker inserting logging batch: '%s'\n",batch->c_str());
 			try {
 				tx->exec(pqxx::prepped{"logging_insert"}, pqxx::params{*batch});
 				++(m_args->monitoring_vars->logging_submissions);
@@ -508,7 +515,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 		m_args->last_i = (m_args->endpoint==DatabaseJobStep::monitoring) ? m_args->endpoint_i : m_args->monitoring_queue.size();
 		
 		// insert new monitoring statements
-		printf("calling prepped for %d monitoring batches\n",m_args->monitoring_queue.size());
+		//printf("calling prepped for %d monitoring batches\n",m_args->monitoring_queue.size());
 		for(size_t i=0; i<m_args->last_i; ++i){
 			if(m_args->bad_mons.count(i)) continue;
 			std::string* batch = m_args->monitoring_queue[i];
@@ -535,7 +542,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 		m_args->last_i = (m_args->endpoint==DatabaseJobStep::rootplots) ? m_args->endpoint_i : m_args->rootplot_queue.size();
 		
 		// insert new multicast rootplot statements
-		printf("calling prepped for %d rootplot batches\n",m_args->rootplot_queue.size());
+		//printf("calling prepped for %d rootplot batches\n",m_args->rootplot_queue.size());
 		for(size_t i=0; i<m_args->last_i; ++i){
 			if(m_args->bad_rootplots.count(i)) continue;
 			std::string* batch = m_args->rootplot_queue[i];
@@ -562,7 +569,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 		m_args->last_i = (m_args->endpoint==DatabaseJobStep::plotlyplots) ? m_args->endpoint_i : m_args->plotlyplot_queue.size();
 		
 		// insert new multicast plotlyplot statements
-		printf("calling prepped for %d plotlyplot batches\n",m_args->plotlyplot_queue.size());
+		//printf("calling prepped for %d plotlyplot batches\n",m_args->plotlyplot_queue.size());
 		for(size_t i=0; i<m_args->last_i; ++i){
 			if(m_args->bad_plotlyplots.count(i)) continue;
 			std::string* batch = m_args->plotlyplot_queue[i];
@@ -589,14 +596,14 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 		m_args->last_i = (m_args->endpoint==DatabaseJobStep::writes) ? m_args->endpoint_i : m_args->write_queue.size();
 		
 		// write queries
-		printf("processing %d write batches\n",m_args->write_queue.size());
+		//printf("processing %d write batches\n",m_args->write_queue.size());
 		for(size_t i=0; i<m_args->last_i; ++i){
 			QueryBatch* batch = m_args->write_queue[i];
 			// the batch gets split up by WriteWorkers into a buffer for each type of write query
 			
 			// alarm insertions return nothing, just catch errors
 			if(batch->got_alarms() && batch->alarm_batch_err.empty()){
-				printf("calling prepped for alarm buffer '%s'\n",batch->alarm_buffer.c_str());
+				//printf("calling prepped for alarm buffer '%s'\n",batch->alarm_buffer.c_str());
 				try {
 					tx->exec(pqxx::prepped{"alarms_insert"}, pqxx::params{batch->alarm_buffer});
 					++(m_args->monitoring_vars->alarm_submissions);
@@ -620,7 +627,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 			
 			// device config insertions
 			if(batch->got_devconfigs() && batch->devconfig_batch_err.empty()){
-				printf("calling prepped for dev_config buffer '%s'\n",batch->devconfig_buffer.c_str());
+				//printf("calling prepped for dev_config buffer '%s'\n",batch->devconfig_buffer.c_str());
 				try {
 					tx->for_query(pqxx::prepped{"device_config_insert"},
 						[&batch](uint16_t new_version_num){
@@ -641,7 +648,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 			
 			// run config insertions
 			if(batch->got_runconfigs() && batch->runconfig_batch_err.empty()){
-				printf("calling prepped for run_config buffer '%s'\n",batch->runconfig_buffer.c_str());
+				//printf("calling prepped for run_config buffer '%s'\n",batch->runconfig_buffer.c_str());
 				try {
 					tx->for_query(pqxx::prepped{"run_config_insert"},
 						[&batch](uint16_t new_version_num){
@@ -662,7 +669,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 			
 			// calibration data insertions
 			if(batch->got_calibrations() && batch->calibration_batch_err.empty()){
-				printf("calling prepped for calibration buffer '%s'\n",batch->calibration_buffer.c_str());
+				//printf("calling prepped for calibration buffer '%s'\n",batch->calibration_buffer.c_str());
 				try {
 					tx->for_query(pqxx::prepped{"calibration_insert"},
 						[&batch](uint16_t new_version_num){
@@ -683,7 +690,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 			
 			// rootplot insertions
 			if(batch->got_rootplots() && batch->rootplot_batch_err.empty()){
-				printf("calling prepped for rootplots buffer '%s'\n",batch->rootplot_buffer.c_str());
+				//printf("calling prepped for rootplots buffer '%s'\n",batch->rootplot_buffer.c_str());
 				try {
 					tx->for_query(pqxx::prepped{"rootplots_insert"},
 						[&batch](uint16_t new_version_num){
@@ -704,7 +711,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 			
 			// plotlyplot insertions
 			if(batch->got_plotlyplots() && batch->plotlyplot_batch_err.empty()){
-				printf("calling prepped for plotlyplots buffer '%s'\n",batch->plotlyplot_buffer.c_str());
+				//printf("calling prepped for plotlyplots buffer '%s'\n",batch->plotlyplot_buffer.c_str());
 				try {
 					tx->for_query(pqxx::prepped{"plotlyplots_insert"},
 						[&batch](uint16_t new_version_num){
@@ -757,7 +764,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 		// and all insertions to the database before that point (the checkpoint) will have been lost.
 		// so loop back to the start and re-run up to the point of last error (endpoint)
 		// this time skipping bad queries to hopefully avoid any errors
-		printf("%s encountered error, re-running up to checkpoint %d\n",m_args->m_job_name, m_args->endpoint);
+		//printf("%s encountered error, re-running up to checkpoint %d\n",m_args->m_job_name, m_args->endpoint);
 		m_args->had_error=false;
 		
 	} while(true); // keep trying until we've submitted everything we can.
@@ -768,15 +775,17 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 	// committed succesfully, but that's probably easier to handle when uploading the file to DB
 	// e.g. with 'ON CONFLICT' or somesuch
 	
+	//for(QueryBatch* q : m_args->write_queue) q->push_time("DB_done");
+	
 	// pass the batch onto the next stage of the pipeline for the DatabaseWorkers
 	if(!m_args->write_queue.empty()){
-		printf("returning %d write acknowledgements to datamodel\n", m_args->write_queue.size());
+		//printf("returning %d write acknowledgements to datamodel\n", m_args->write_queue.size());
 		std::unique_lock<std::mutex> locker(m_args->m_data->query_results_mtx);
 		m_args->m_data->query_results.insert(m_args->m_data->query_results.end(),
 		                                     m_args->write_queue.begin(),m_args->write_queue.end());
 	}
 	
-	printf("%s completed\n",m_args->m_job_name.c_str());
+	//printf("%s completed\n",m_args->m_job_name.c_str());
 	++(m_args->monitoring_vars->jobs_completed);
 	
 	// return our job args to the pool
