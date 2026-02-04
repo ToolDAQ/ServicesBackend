@@ -355,6 +355,7 @@ void MulticastReceiverSender::Thread(Thread_args* arg){
 		// else see if there are any in datamodel to grab
 		std::unique_lock<std::mutex> locker(*m_args->out_queue_mtx);
 		if(!m_args->out_queue->empty()){
+			m_args->out_local_queue.clear();
 			//printf("%s fetching new outgoing messages\n",m_args->m_tool_name.c_str());
 			std::swap(*m_args->out_queue, m_args->out_local_queue);
 			++(m_args->monitoring_vars->out_buffer_transfers);
