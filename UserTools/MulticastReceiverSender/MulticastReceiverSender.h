@@ -36,14 +36,15 @@ struct MulticastReceive_args : public Thread_args {
 	int socket;
 	int poll_timeout_ms;
 	zmq::pollitem_t poll;
-	char message[655355]; // theoretical maximum UDP buffer size - size also hard-coded in thread
 	int get_ok;
 	size_t local_buffer_size;
-	std::vector<std::string>* in_local_queue;
+	std::string* message;
+	bool do_transfer;
+	size_t offset;
 	std::vector<std::string> out_local_queue;
 	size_t out_i=0;
 	
-	std::vector<std::vector<std::string>*>* in_queue;
+	std::vector<std::string*>* in_queue;
 	std::mutex* in_queue_mtx;
 	std::vector<std::string>* out_queue;
 	std::mutex* out_queue_mtx;
