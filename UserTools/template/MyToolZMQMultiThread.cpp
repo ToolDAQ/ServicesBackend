@@ -1,6 +1,6 @@
 #include "MyToolZMQMultiThread.h"
 
-MyToolZMQMultiThread_args::MyToolZMQMultiThread_args():Thread_args(){}
+MyToolZMQMultiThread_args::MyToolZMQMultiThread_args():DAQThread_args(){}
 
 MyToolZMQMultiThread_args::~MyToolZMQMultiThread_args(){}
 
@@ -10,18 +10,17 @@ MyToolZMQMultiThread::MyToolZMQMultiThread():Tool(){}
 
 bool MyToolZMQMultiThread::Initialise(std::string configfile, DataModel &data){
 
-  if(configfile!="")  m_variables.Initialise(configfile);
-  //m_variables.Print();
+  InitialiseTool(data);
+  InitialiseConfiguration(configfile);
 
-  m_data= &data;
-  m_log= m_data->Log;
+  //m_variables.Print();
 
   if(!m_variables.Get("verbose",m_verbose)) m_verbose=1;
 
   int threadcount=0;
   if(!m_variables.Get("Threads",threadcount)) threadcount=4;
 
-  m_util=new Utilities(m_data->context);
+  m_util=new DAQUtilities(m_data->context);
 
   ManagerSend=new zmq::socket_t(*m_data->context,ZMQ_PUSH);
   ManagerSend->bind("inproc://MyToolZMQMultiThreadSend");
@@ -62,7 +61,7 @@ bool MyToolZMQMultiThread::Initialise(std::string configfile, DataModel &data){
   
   m_freethreads=threadcount;
   
-    
+  ExportConfiguration();
   
   return true;
 }
@@ -77,7 +76,7 @@ bool MyToolZMQMultiThread::Execute(){
     zmq::message_t message;
     ManagerReceive->recv(&message);
     std::istringstream iss(static_cast<char*>(message.data()));
-    std::cout<<"reply = "<<iss.str()<<std::endl;
+    *m_log<<"reply = "<<iss.str()<<std::endl;
     m_freethreads++;
 
   }
@@ -97,15 +96,18 @@ bool MyToolZMQMultiThread::Execute(){
 
   }
 
-  std::cout<<"free threads="<<m_freethreads<<":"<<args.size()<<std::endl;
-  sleep(1);
+  *m_log<<ML(1)<<"free threads="<<m_freethreads<<":"<<args.size()<<std::endl;
+  MLC();
+
+  // sleep(1);  for single tool testing  
+  
   return true;
 }
 
 
 bool MyToolZMQMultiThread::Finalise(){
 
-  for(int i=0;i<args.size();i++) {
+  for(unsigned int i=0;i<args.size();i++) {
 
     m_util->KillThread(args.at(i));
     delete args.at(i)->ThreadSend;

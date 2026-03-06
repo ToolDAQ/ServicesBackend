@@ -5,6 +5,7 @@
 #include <iostream>
 
 #include "Tool.h"
+#include "DataModel.h"
 
 /**
  * \struct MyToolDynamicMultiThread_args
@@ -14,7 +15,6 @@ d and so will be thread safe
 *
 * $Author: B.Richards $
 * $Date: 2019/05/28 10:44:00 $
-* Contact: b.richards@qmul.ac.uk
 */
 
 struct MyToolDynamicMultiThread_args:Thread_args{
@@ -33,8 +33,8 @@ struct MyToolDynamicMultiThread_args:Thread_args{
  *
  * $Author: B.Richards $
  * $Date: 2019/05/28 10:44:00 $
- * Contact: b.richards@qmul.ac.uk
  */
+
 class MyToolDynamicMultiThread: public Tool {
 
 
@@ -49,13 +49,13 @@ class MyToolDynamicMultiThread: public Tool {
  private:
 
   void CreateThread(); ///< Function to Create Thread
-  void DeleteThread(int pos); ///< Function to delete thread @param pos is the position in the args vector below
+  void DeleteThread(unsigned int pos); ///< Function to delete thread @param pos is the position in the args vector below
 
   static void Thread(Thread_args* arg); ///< Function to be run by the thread in a loop. Make sure not to block in it
   Utilities* m_util; ///< Pointer to utilities class to help with threading
   std::vector<MyToolDynamicMultiThread_args*> args; ///< Vector of thread args (also holds pointers to the threads)
 
-  int m_freethreads; ///< Keeps track of free threads
+  unsigned int m_freethreads; ///< Keeps track of free threads
   unsigned long m_threadnum; ///< Counter for unique naming of threads
 
 };

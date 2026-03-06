@@ -1,0 +1,8 @@
+verbose 2
+hostname /tmp
+#hostaddr 127.0.0.1
+dbname daq
+port 5432
+user root # fall back to PGUSER env var if not defined? FIXME better user?
+#passwd 
+max_workers 10

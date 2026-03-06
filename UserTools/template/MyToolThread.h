@@ -5,6 +5,7 @@
 #include <iostream>
 
 #include "Tool.h"
+#include "DataModel.h"
 
 /**
  * \struct MyToolThread_args_args
@@ -13,7 +14,6 @@
  *
  * $Author: B.Richards $
  * $Date: 2019/05/28 10:44:00 $
- * Contact: b.richards@qmul.ac.uk
  */
 
 struct MyToolThread_args:Thread_args{
@@ -30,7 +30,6 @@ struct MyToolThread_args:Thread_args{
 *
 * $Author: B.Richards $
 * $Date: 2019/05/28 10:44:00 $
-* Contact: b.richards@qmul.ac.uk
 */
 
 class MyToolThread: public Tool {

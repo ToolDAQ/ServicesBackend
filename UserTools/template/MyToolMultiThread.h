@@ -5,6 +5,7 @@
 #include <iostream>
 
 #include "Tool.h"
+#include "DataModel.h"
 
 /**
  * \struct MyToolMultiThread_args
@@ -13,7 +14,6 @@
  *
  * $Author: B.Richards $
  * $Date: 2019/05/28 10:44:00 $
- * Contact: b.richards@qmul.ac.uk
  */
 
 struct MyToolMultiThread_args:Thread_args{
@@ -32,7 +32,6 @@ struct MyToolMultiThread_args:Thread_args{
  *
  * $Author: B.Richards $
  * $Date: 2019/05/28 10:44:00 $
- * Contact: b.richards@qmul.ac.uk
  */
 
 class MyToolMultiThread: public Tool {
@@ -52,7 +51,7 @@ class MyToolMultiThread: public Tool {
   Utilities* m_util; ///< Pointer to utilities class to help with threading
   std::vector<MyToolMultiThread_args*> args; ///< Vector of thread args (also holds pointers to the threads)
 
-  int m_freethreads; ///< Keeps track of free threads
+  unsigned int m_freethreads; ///< Keeps track of free threads
 
 };
 

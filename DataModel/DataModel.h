@@ -1,59 +1,139 @@
 #ifndef DATAMODEL_H
 #define DATAMODEL_H
 
-#include <map>
-#include <string>
 #include <vector>
+#include <atomic>
+#include <mutex>
 
-//#include "TTree.h"
-
-#include "Store.h"
-#include "BoostStore.h"
-#include "Logging.h"
-#include "Utilities.h"
-
-#include <zmq.hpp>
+#include "DAQDataModelBase.h"
+#include "Pool.h"
+#include "JobQueue.h"
+#include "QueryBatch.h"
+#include "ManagedSocket.h"
+#include "query_topics.h"
+#include "type_name_as_string.h" // mostly for debug
+class MonitoringVariables;
 
 /**
 * \class DataModel
- *
- * This class Is a transient data model class for your Tools within the ToolChain. If Tools need to comunicate they pass all data objects through the data model. There fore inter tool data objects should be deffined in this class.
+*
+* This class is a transient data model class for your Tools within the ToolChain. If Tools need to communicate they pass all data through the data model. Therefore inter-tool data variables should be defined in this class.
  *
  *
  * $Author: B.Richards $
- * $Date: 2019/05/26 18:34:00 $
- * Contact: b.richards@qmul.ac.uk
- *          
- */
+ * $Date: 2019/05/26 $
+ * Contact: benjamin.richards@warwick.ac.uk
+ *
+*/
 
-class DataModel {
+using namespace ToolFramework;
 
-
- public:
-  
-  DataModel(); ///< Simple constructor
-
-  //TTree* GetTTree(std::string name);
-  //void AddTTree(std::string name,TTree *tree);
-  //void DeleteTTree(std::string name);
-
-  Store vars; ///< This Store can be used for any variables. It is an inefficent ascii based storage    
-  BoostStore CStore; ///< This is a more efficent binary BoostStore that can be used to store a dynamic set of inter Tool variables.
-  std::map<std::string,BoostStore*> Stores; ///< This is a map of named BooStore pointers which can be deffined to hold a nammed collection of any tipe of BoostStore. It is usefull to store data that needs subdividing into differnt stores.
-  
-  Logging *Log; ///< Log class pointer for use in Tools, it can be used to send messages which can have multiple error levels and destination end points  
-
-  zmq::context_t* context; ///< ZMQ contex used for producing zmq sockets for inter thread,  process, or computer communication
-
-
- private:
-
-
-  
-  //std::map<std::string,TTree*> m_trees; 
-  
-  
-  
+class DataModel : public DAQDataModelBase {
+	
+	public:
+	DataModel(); ///< Simple constructor
+	
+	Utilities utils; ///< for thread management
+	
+	bool change_config; ///< signaller for Tools to reload their configuration variables
+	
+	// Tools can add connections to this and the SocketManager
+	// will periodically invoke UpdateConnections to connect clients
+	std::map<std::string, ManagedSocket*> managed_sockets;
+	std::mutex managed_sockets_mtx;
+	
+	Pool<Job> job_pool; ///< pool of job structures to encapsulate jobs
+	JobQueue job_queue; ///< job queue to submit jobs to job manager
+	uint32_t thread_cap; ///< total number of thread cap to use in the program
+	std::atomic<uint32_t> num_threads; ///< current number of threads
+	unsigned int worker_threads;
+	unsigned int max_worker_threads;
+	
+	std::map<std::string, MonitoringVariables*> monitoring_variables;
+	std::mutex monitoring_variables_mtx;
+	
+	/* ----------------------------------------- */
+	/*          MulticastReceiveSender           */
+	/* ----------------------------------------- */
+	
+	// pool of string buffers:
+	// the receiver thread grabs a vector from the pool, fills it,
+	// the pushes the filled vector into the in_multicast_msg_queue
+	// and grabs a new vector from the pool
+	// FIXME base pool size on available RAM and struct size / make configurable
+	// Pool::Pool(bool in_manage=false, uint16_t period_ms=1000, size_t in_object_cap=1)
+	Pool<std::vector<std::string>> multicast_buffer_pool{true, 5000, 100};
+	
+	// batches of received messages, both logging and monitoring
+	// FIXME make these pairs or structs, container+mtx
+	// FIXME if instead of just a vector<string> we used MulticastBatch, we could accumulate the length
+	// and then reserve in advance the length of the string needed for the combined message....?
+	 // XXX actually only if we tracked by topic, as one vector<string> gets turned into 5 topical concat'd strings...
+	std::vector<std::vector<std::string>*> in_multicast_msg_queue;
+	std::mutex in_multicast_msg_queue_mtx;
+	
+	// outgoing logging messages
+	std::vector<std::string> out_log_msg_queue;
+	std::mutex out_log_msg_queue_mtx;
+	
+	// outgoing monitoring messages
+	std::vector<std::string> out_mon_msg_queue;
+	std::mutex out_mon_msg_queue_mtx;
+	
+	// pool is shared between read and write query receivers
+	Pool<QueryBatch> querybatch_pool{true, 5000, 100};
+	
+	/* ----------------------------------------- */
+	/*               PubReceiver                 */
+	/* ----------------------------------------- */
+	std::vector<QueryBatch*> write_msg_queue;
+	std::mutex write_msg_queue_mtx;
+	
+	/* ----------------------------------------- */
+	/*                 ReadReply                 */
+	/* ----------------------------------------- */
+	// TODO Tool monitoring struct?
+	std::vector<QueryBatch*> read_msg_queue;
+	std::mutex read_msg_queue_mtx;
+	std::deque<QueryBatch*> query_replies;
+	std::mutex query_replies_mtx;
+	
+	/* ----------------------------------------- */
+	/*              MulticastWorkers             */
+	/* ----------------------------------------- */
+	// each element is a batch of JSON that can be inserted by the DatabaseWorkers
+	// FIXME these strings represent batches of multicast messages, so could be very large.
+	// each push_back could require reallocation, which could involve moving a lot of very large message buffers
+	// FIXME make these pointers, put the strings (maybe make a struct? maybe just a typedef/alias?) in a pool?
+	Pool<std::string> multicast_batch_pool{true, 5000, 100};
+	
+	std::vector<std::string*> log_query_queue;
+	std::mutex log_query_queue_mtx;
+	
+	std::vector<std::string*> mon_query_queue;
+	std::mutex mon_query_queue_mtx;
+	
+	std::vector<std::string*> rootplot_query_queue;
+	std::mutex rootplot_query_queue_mtx;
+	
+	std::vector<std::string*> plotlyplot_query_queue;
+	std::mutex plotlyplot_query_queue_mtx;
+	
+	/* ----------------------------------------- */
+	/*                WriteWorkers               */
+	/* ----------------------------------------- */
+	std::vector<QueryBatch*> write_query_queue;
+	std::mutex write_query_queue_mtx;
+	
+	/* ----------------------------------------- */
+	/*               DatabaseWorkers             */
+	/* ----------------------------------------- */
+	
+	std::vector<QueryBatch*> query_results; // output, awaiting for result conversion
+	std::mutex query_results_mtx;
+	
+	private:
+	
 };
 
 

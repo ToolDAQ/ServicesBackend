@@ -10,22 +10,21 @@ MyToolDynamicMultiThread::MyToolDynamicMultiThread():Tool(){}
 
 bool MyToolDynamicMultiThread::Initialise(std::string configfile, DataModel &data){
 
-  if(configfile!="")  m_variables.Initialise(configfile);
+  InitialiseTool(data);
+  m_configfile = configfile;
+  InitialiseConfiguration(configfile);
   //m_variables.Print();
-
-  m_data= &data;
-  m_log= m_data->Log;
-
+  
   if(!m_variables.Get("verbose",m_verbose)) m_verbose=1;
 
-  m_util=new Utilities(m_data->context);
+  m_util=new Utilities();
 
   m_threadnum=0;
   CreateThread();
   
   m_freethreads=1;
   
-    
+  ExportConfiguration();    
   
   return true;
 }
@@ -33,9 +32,9 @@ bool MyToolDynamicMultiThread::Initialise(std::string configfile, DataModel &dat
 
 bool MyToolDynamicMultiThread::Execute(){
 
-  for(int i=0; i<args.size(); i++){
+  for(unsigned int i=0; i<args.size(); i++){
     if(args.at(i)->busy==0){
-      std::cout<<"reply="<<args.at(i)->message<<std::endl;
+      *m_log<<"reply="<<args.at(i)->message<<std::endl;
       args.at(i)->message="Hi";
       args.at(i)->busy=1;
       break;
@@ -44,8 +43,8 @@ bool MyToolDynamicMultiThread::Execute(){
   }
 
   m_freethreads=0;
-  int lastfree=0;
-  for(int i=0; i<args.size(); i++){
+  unsigned int lastfree=0;
+  for(unsigned int i=0; i<args.size(); i++){
     if(args.at(i)->busy==0){
       m_freethreads++;
       lastfree=i; 
@@ -55,9 +54,10 @@ bool MyToolDynamicMultiThread::Execute(){
   if(m_freethreads<1) CreateThread();
   if(m_freethreads>1) DeleteThread(lastfree);
   
-  std::cout<<"free threads="<<m_freethreads<<":"<<args.size()<<std::endl;
+  *m_log<<ML(1)<<"free threads="<<m_freethreads<<":"<<args.size()<<std::endl;
+  MLC();
   
-  sleep(1);
+  // sleep(1);  for single tool testing
   
   return true;
 }
@@ -65,7 +65,7 @@ bool MyToolDynamicMultiThread::Execute(){
 
 bool MyToolDynamicMultiThread::Finalise(){
 
-  for(int i=0;i<args.size();i++) m_util->KillThread(args.at(i));
+  for(unsigned int i=0;i<args.size();i++) DeleteThread(0);
   
   args.clear();
   
@@ -88,12 +88,12 @@ void MyToolDynamicMultiThread::CreateThread(){
 
 }
 
- void MyToolDynamicMultiThread::DeleteThread(int pos){
+ void MyToolDynamicMultiThread::DeleteThread(unsigned int pos){
 
    m_util->KillThread(args.at(pos));
    delete args.at(pos);
    args.at(pos)=0;
-   args.erase(args.begin()+(pos-1));
+   args.erase(args.begin()+(pos));
 
  }
 

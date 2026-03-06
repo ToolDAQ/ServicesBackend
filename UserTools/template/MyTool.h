@@ -5,7 +5,7 @@
 #include <iostream>
 
 #include "Tool.h"
-
+#include "DataModel.h"
 
 /**
  * \class MyTool
@@ -14,8 +14,8 @@
 *
 * $Author: B.Richards $
 * $Date: 2019/05/28 10:44:00 $
-* Contact: b.richards@qmul.ac.uk
 */
+
 class MyTool: public Tool {
 
 

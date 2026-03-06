@@ -1,0 +1,4 @@
+verbose 2
+#thread_cap 100 # default: 80% of detected CPUs
+#global_thread_cap # default: == thread_cap
+self_serving 1

@@ -1,0 +1,8 @@
+verbose 2
+type logging
+multicast_address 239.192.1.2
+port 5000
+local_buffer_size 200
+transfer_period_ms 100
+poll_timeout_ms 20
+

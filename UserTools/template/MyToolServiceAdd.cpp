@@ -5,16 +5,15 @@ MyToolServiceAdd::MyToolServiceAdd():Tool(){}
 
 bool MyToolServiceAdd::Initialise(std::string configfile, DataModel &data){
 
-  if(configfile!="")  m_variables.Initialise(configfile);
-  //m_variables.Print();
+  InitialiseTool(data);
+  InitialiseConfiguration(configfile);
 
-  m_data= &data;
-  m_log= m_data->Log;
+  //m_variables.Print();
 
   if(!m_variables.Get("verbose",m_verbose)) m_verbose=1;
   if(!m_variables.Get("Port",m_port)) m_port=5555;
 
-  m_util=new Utilities(m_data->context);
+  m_util=new DAQUtilities(m_data->context);
   
   sock = new  zmq::socket_t(*(m_data->context), ZMQ_DEALER);
 
@@ -25,6 +24,8 @@ bool MyToolServiceAdd::Initialise(std::string configfile, DataModel &data){
 
   if (!m_util->AddService("MyService",m_port,false)) return false;
   
+  ExportConfiguration();
+
   return true;
 }
 
