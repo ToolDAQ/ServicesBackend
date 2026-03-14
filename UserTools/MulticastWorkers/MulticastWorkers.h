@@ -31,6 +31,8 @@ struct MulticastJobStruct {
 	std::string* rootplot_buffer;
 	std::string* plotlyplot_buffer;
 	std::string* out_buffer;
+	int n_log_msgs;
+	int n_mon_msgs;
 	
 };
 
@@ -58,6 +60,7 @@ class MulticastWorkers: public Tool {
 	
 	static bool MulticastMessageJob(void*& arg); ///< job function that prepares a batch of multicast messages for DB entry
 	static void MulticastMessageFail(void*& arg); ///< job fail function, perform cleanup to return multicast buffer and job args struct to their respective Pools
+	std::chrono::time_point<std::chrono::steady_clock> last_exec;
 	
 	// for now use shared ones in datamodel
 	//WorkerPoolManager* job_manager=nullptr; ///< manager for worker farm, has internal background thread that spawns new jobs and or prunes them, along with tracking statistics

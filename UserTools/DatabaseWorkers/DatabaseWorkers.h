@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <set>
+#include <chrono>
 
 #include "Tool.h"
 #include "DataModel.h"
@@ -104,6 +105,8 @@ class DatabaseWorkers: public Tool {
 	
 	static bool DatabaseJob(void*& arg);
 	static void DatabaseJobFail(void*& args);
+	
+	std::chrono::time_point<std::chrono::steady_clock> last_exec;
 	
 };
 

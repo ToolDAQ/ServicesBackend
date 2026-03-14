@@ -2,10 +2,12 @@
 #define JobManager_H
 
 #include <iostream>
+#include <chrono>
 
 #include "Tool.h"
 #include "DataModel.h"
 #include "WorkerPoolManager.h"
+#include "JobManagerMonitoring.h"
 
 /**
 * \class JobManager
@@ -29,6 +31,8 @@ class JobManager: public Tool {
 	bool self_serving;
 	unsigned int m_thread_cap;
 	WorkerPoolManager* worker_pool_manager;
+	JobManagerMonitoring monitoring_vars;
+	std::chrono::time_point<std::chrono::steady_clock> last_exec;
 	
 	std::string m_configfile;
 	void LoadConfig();

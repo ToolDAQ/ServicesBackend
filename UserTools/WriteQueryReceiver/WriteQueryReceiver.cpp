@@ -191,6 +191,7 @@ void WriteQueryReceiver::Thread(Thread_args* args){
 		if(zmq_errno()==EINTR) return;
 		std::cerr<<m_args->m_tool_name<<" poll caught "<<err.what()<<std::endl;
 		++(m_args->monitoring_vars->polls_failed);
+		if(zmq_errno()==ETERM) m_args->running=false; // context terminated
 //		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 		return;
 	} catch(std::exception& err){
@@ -251,8 +252,8 @@ void WriteQueryReceiver::Thread(Thread_args* args){
 				// FIXME do we do this? for efficiency? here? do we add a flag for bad and do it in the processing?
 				// FIXME do we try to make a query out of the first 4 parts? i'm gonna say no, for now
 				// pass of as fail job
-				for(int i=0; i<m_args->msg_parts; ++i){
-					char msg_str[msg_buf[part_order[i]].size()];
+				for(int i=0; i<std::min(4,m_args->msg_parts); ++i){
+					char msg_str[msg_buf[part_order[i]].size()+1];
 					snprintf(&msg_str[0], msg_buf[part_order[i]].size()+1, "%s", msg_buf[part_order[i]].data());
 					printf("\tpart %d: %s\n",i, msg_str);
 				}
@@ -271,6 +272,7 @@ void WriteQueryReceiver::Thread(Thread_args* args){
 			if(zmq_errno()==EINTR) return; // FIXME is this appropriate here?
 			std::cerr<<m_args->m_tool_name<<" receive caught "<<err.what()<<std::endl;
 			++(m_args->monitoring_vars->rcv_fails);
+			if(zmq_errno()==ETERM) m_args->running=false; // context terminated
 //			m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 			return;
 		} catch(std::exception& err){

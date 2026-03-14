@@ -72,6 +72,10 @@ class MulticastReceiverSender: public Tool {
 	int get_ok;
 	std::atomic<int>* thread_crashes;
 	
+	int64_t last_bytes_in;
+	int64_t last_bytes_out;
+	std::chrono::time_point<std::chrono::steady_clock> last_bytes_time;
+	
 };
 
 #endif

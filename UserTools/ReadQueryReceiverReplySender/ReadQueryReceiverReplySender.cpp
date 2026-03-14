@@ -190,6 +190,7 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 		if(zmq_errno()==EINTR) return; // this is probably fine
 		std::cerr<<m_args->m_tool_name<<" in poll caught "<<err.what()<<std::endl;
 		++(m_args->monitoring_vars->polls_failed);
+		if(zmq_errno()==ETERM) m_args->running=false; // context terminated
 //		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 		usleep(10);
 		return;
@@ -256,8 +257,8 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 			} else if(m_args->msg_parts!=4){
 				
 				std::cerr<<m_args->m_tool_name<<": Unexpected "<<m_args->msg_parts<<" part message"<<std::endl;
-				for(int i=0; i<m_args->msg_parts; ++i){
-					char msg_str[msg_buf[part_order[i]].size()];
+				for(int i=0; i<std::min(4,m_args->msg_parts); ++i){
+					char msg_str[msg_buf[part_order[i]].size()+1];
 					snprintf(&msg_str[0], msg_buf[part_order[i]].size()+1, "%s", msg_buf[part_order[i]].data());
 					printf("\tpart %d: %s\n",i, msg_str);
 				}
@@ -280,6 +281,7 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 			std::cerr<<m_args->m_tool_name<<" receive caught "<<err.what()<<std::endl;
 			++(m_args->monitoring_vars->rcv_fails);
 //			m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
+			if(zmq_errno()==ETERM) m_args->running=false; // context terminated
 		} catch(std::exception& err){
 			std::cerr<<m_args->m_tool_name<<" receive caught "<<err.what()<<std::endl;
 			++(m_args->monitoring_vars->rcv_fails);
@@ -344,16 +346,22 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 			// response parts are [client,msg_id, success, results...]
 			
 			//printf("reply to message %u has %d parts\n", rep.msg_id(), rep.size());
+			
 			/*
-			uint32_t turnaround = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now()-rep.times[0].second).count();
-			if(rep.size()>3){
-				printf("%s turnaround of %u ms on response '%s' to message %u\n",m_args->m_tool_name.c_str(), turnaround, rep[3].data(), *(uint32_t*)(rep[1].data()));
-			} else {
-				printf("%s turnaround of %u ms on ack %u to message %u\n",m_args->m_tool_name.c_str(), turnaround, *(uint32_t*)rep[2].data(), *(uint32_t*)(rep[1].data()));
-			}
+			uint32_t turnaround = std::chrono::duration_cast<std::chrono::milliseconds>
+			                     (std::chrono::system_clock::now()-rep.times[0].second).count();
+			printf("%s sending reply to %lu with turnaround %lu\n",m_args->m_tool_name.c_str(), *(uint32_t*)(rep[1].data()), turnaround);
 			rep.print_times();
 			*/
 			
+			// XXX
+			/*
+			if(rep.size()>3){
+				printf("%s sending response '%s' to message %u\n",m_args->m_tool_name.c_str(), rep[3].data(), *(uint32_t*)(rep[1].data()));
+			} else {
+				printf("%s sending ack %u to message %u\n",m_args->m_tool_name.c_str(), *(uint32_t*)rep[2].data(), *(uint32_t*)(rep[1].data()));
+			}
+			*/
 			
 			try {
 				
@@ -378,9 +386,9 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 					return;
 				}
 				// FIXME if we do implement re-sending, then do not do this
-				rep.parts.resize(0); // safety to prevent accidentally accessing sent messages, which can segfault
+				rep.parts.resize(0); // prevent accidentally accessing sent messages: can segfault
 				
-				// else success
+				// success
 				//printf("%s reply at %p sent\n",m_args->m_tool_name.c_str(), &rep);
 				++(m_args->monitoring_vars->msgs_sent);
 				

@@ -35,6 +35,8 @@ bool MulticastWorkers::Initialise(std::string configfile, DataModel &data){
 	}
 	m_data->num_threads++;
 	
+	last_exec = std::chrono::steady_clock::now();
+	
 	return true;
 }
 
@@ -48,6 +50,19 @@ bool MulticastWorkers::Execute(){
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		++(monitoring_vars.thread_crashes);
 	}
+	
+	auto time_now = std::chrono::steady_clock::now();
+	auto time_since_last = time_now - last_exec;
+	if(time_since_last < std::chrono::milliseconds(1000)) return true;
+	last_exec = time_now;
+	
+	printf("messages processed: %d (%.0f MB),\t logs: %d (%.0f MB),\tmons: %d (%.0f MB)\n",
+	       monitoring_vars.msgs_processed.load(),
+	       double(monitoring_vars.bytes_processed.load())/1E6,
+	       monitoring_vars.logs_processed.load(),
+	       double(monitoring_vars.logging_bytes_processed.load())/1E6,
+	       monitoring_vars.mons_processed.load(),
+	       double(monitoring_vars.monitoring_bytes_processed.load())/1E6);
 	
 	return true;
 }
@@ -121,6 +136,7 @@ void MulticastWorkers::Thread(Thread_args* args){
 		//multicast_jobs.AddJob(the_job);
 		//printf("spawning new multicastjob for %d messages\n",job_data->msg_buffer->size());
 		m_args->m_data->job_queue.AddJob(the_job);
+		//++(m_args->monitoring_vars.jobs_submitted);
 		
 	}
 	
@@ -192,6 +208,9 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 	*m_args->rootplot_buffer = "[";
 	*m_args->plotlyplot_buffer = "[";
 	
+	m_args->n_log_msgs = 0;
+	m_args->n_mon_msgs = 0;
+	
 	// loop over messages
 	for(std::string& next_msg : *m_args->msg_buffer){
 		
@@ -210,9 +229,11 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 		switch(query_topic{next_msg[10]}){
 			case query_topic::logging:
 				m_args->out_buffer = m_args->logging_buffer;
+				++m_args->n_log_msgs;
 				break;
 			case query_topic::monitoring:
 				m_args->out_buffer = m_args->monitoring_buffer;
+				++m_args->n_mon_msgs;
 				break;
 			case query_topic::rootplot:
 				m_args->out_buffer = m_args->rootplot_buffer;
@@ -229,7 +250,7 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 		(*m_args->out_buffer) += next_msg;
 		//printf("%s added message '%s'\n",m_args->m_job_name.c_str(), next_msg.c_str());
 		
-		++(m_args->monitoring_vars->msgs_processed);
+		m_args->monitoring_vars->bytes_processed += next_msg.size(); // FIXME assumes this job completes successfully
 		
 	}
 	
@@ -265,6 +286,12 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 	
 	//printf("%s job completed\n",m_args->m_job_name.c_str());
 	++(m_args->monitoring_vars->jobs_completed);
+	m_args->monitoring_vars->msgs_processed += m_args->msg_buffer->size();
+	m_args->monitoring_vars->logs_processed += m_args->n_log_msgs;
+	m_args->monitoring_vars->mons_processed += m_args->n_mon_msgs;
+	m_args->monitoring_vars->logging_bytes_processed += m_args->logging_buffer->length() - 2 - m_args->n_log_msgs;
+	m_args->monitoring_vars->monitoring_bytes_processed += m_args->monitoring_buffer->length() - 2 - m_args->n_mon_msgs;
+	
 	
 	m_args->m_pool->Add(m_args);  // return our job args to the job args struct pool
 	m_args = nullptr;  // clear the local m_args variable... not strictly necessary

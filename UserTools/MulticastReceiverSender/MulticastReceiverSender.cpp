@@ -50,6 +50,11 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 	
 	ExportConfiguration();
 	
+	// init
+	last_bytes_in=0;
+	last_bytes_out=0;
+	last_bytes_time=std::chrono::steady_clock::now();
+	
 	/* ----------------------------------------- */
 	/*               Socket Setup                */
 	/* ----------------------------------------- */
@@ -59,6 +64,10 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 		Log(std::string{"Failed to open multicast socket with error "}+strerror(errno),v_error);
 		return false;
 	}
+	
+	// set buffer size to increase it. n.b. buffer size will be doubled, apprently.
+	int rcvbuf = 128 * 1024 * 1024; // 128MB (but actually 256?)
+	setsockopt(socket_handle, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
 	
 	// set linger options - do not linger, discard queued messages on socket close
 	struct linger l;
@@ -186,6 +195,15 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 	}
 	m_data->num_threads++;
 	
+	// pre-fill the Pool
+	std::vector<std::string*> ms;
+	for(int i=0; i<15; ++i){
+		ms.emplace_back(m_data->multicast_batch_pool.GetNew());
+		ms.back()->resize(local_buffer_size);
+	}
+	for(std::string* m : ms) m_data->multicast_batch_pool.Add(m);
+	ms.clear();
+	
 	return true;
 }
 
@@ -200,13 +218,30 @@ bool MulticastReceiverSender::Execute(){
 		++(monitoring_vars.thread_crashes);
 	}
 	
-	// Hmmm, throttling of the main thread is specified in the Sleep tool, but that's fairly short
-	// that means these variables are being updated thousands of times a second.
+	// Hmmm, throttling of the main thread is specified in the Sleep tool
+	// that's toolchain-wide so is currently quite short, but means
+	// these variables are being updated thousands of times a second.
 	// Pro: monitoring info is up-to-date when it goes out
 	// Con: wasteful...
 	// FIX: update 1/10th monitoring interval? synchronise with Monitoring Tool?
+	auto time_now = std::chrono::steady_clock::now();
+	double ms_since_last = std::chrono::duration_cast<std::chrono::milliseconds>(time_now-last_bytes_time).count();
+	if(ms_since_last<1000) return true;
+	
+	int64_t bytes_in = monitoring_vars.bytes_received.load();
+	int64_t bytes_out = monitoring_vars.bytes_sent.load();
+	double receive_rate_MBps = 1E-3*(bytes_in - last_bytes_in)/ms_since_last;
+	double send_rate_MBps = 1E-3*(bytes_out - last_bytes_out)/ms_since_last;
+	
 	//monitoring_vars.Set("buffered_in_messages",thread_args.in_local_queue->size());
 	monitoring_vars.Set("waiting_out_messages",thread_args.out_local_queue.size());
+	monitoring_vars.Set("receive_rate_MB/s",receive_rate_MBps);
+	monitoring_vars.Set("send_rate_MB/s",send_rate_MBps);
+	printf("%-20s\treceive rate: %.0f MB/s\treceived: %.0f MB\ttransers: %d\n",type_str.c_str(),receive_rate_MBps,double(bytes_in)/1E6,monitoring_vars.in_buffer_transfers.load());
+	
+	last_bytes_time = time_now;
+	last_bytes_in = bytes_in;
+	last_bytes_out = bytes_out;
 	
 	/*
 	actually we can't do this. steady_clock is what we want for regular tasks,
@@ -335,6 +370,7 @@ void MulticastReceiverSender::Thread(Thread_args* arg){
 		} else {
 			
 			++(m_args->monitoring_vars->msgs_rcvd);
+			m_args->monitoring_vars->bytes_received += m_args->get_ok;
 			//m_data->Log("Received multicast message '"+std::string(m_args->message)
 			//            +"' from "+std::string{inet_ntoa(&m_args->addr->sin_addr)},12);
 			
@@ -355,14 +391,15 @@ void MulticastReceiverSender::Thread(Thread_args* arg){
 		std::string& message = m_args->out_local_queue[m_args->out_i++]; // always increment, even if error
 		
 		// send it
-		int cnt = sendto(m_args->socket, message.c_str(), message.length()+1, 0, (struct sockaddr*)&m_args->addr, m_args->addrlen);
+		m_args->get_ok = sendto(m_args->socket, message.c_str(), message.length(), 0, (struct sockaddr*)&m_args->addr, m_args->addrlen);
 		
 		// check success
-		if(cnt < 0){
+		if(m_args->get_ok < 0){
 			//m_data->Log("Error sending multicast message: "+strerror(errno),v_error); // FIXME ensure this isn't circular
 			++(m_args->monitoring_vars->send_fails);
 		} else {
 			++(m_args->monitoring_vars->msgs_sent);
+			m_args->monitoring_vars->bytes_sent += m_args->get_ok;
 		}
 		
 	} else {

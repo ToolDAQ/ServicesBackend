@@ -104,6 +104,8 @@ bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 		return false;
 	}
 	
+	last_exec = std::chrono::steady_clock::now();
+	
 	return true;
 }
 
@@ -122,6 +124,19 @@ bool DatabaseWorkers::Execute(){
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		++(monitoring_vars.thread_crashes);
 	}
+	
+	auto time_now = std::chrono::steady_clock::now();
+	auto time_since_last = time_now - last_exec;
+	if(time_since_last < std::chrono::milliseconds(1000)) return true;
+	last_exec = time_now;
+	
+	printf("%-20s\tlogs processed: %d\tbytes: %d\tmons processed:%d\tbytes: %d\tjobs completed: %d\n",
+	       m_tool_name.c_str(),
+	       monitoring_vars.logging_submissions.load(),
+	       monitoring_vars.logging_bytes.load(),
+	       monitoring_vars.monitoring_submissions.load(),
+	       monitoring_vars.monitoring_bytes.load(),
+	       monitoring_vars.jobs_completed.load());
 	
 	return true;
 }
@@ -493,6 +508,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 			try {
 				tx->exec(pqxx::prepped{"logging_insert"}, pqxx::params{*batch});
 				++(m_args->monitoring_vars->logging_submissions);
+				m_args->monitoring_vars->logging_bytes += batch->length();
 			} catch (std::exception& e){
 				std::cerr<<"dbworker log insert failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
 				++(m_args->monitoring_vars->logging_submissions_failed);
@@ -522,6 +538,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 			try {
 				tx->exec(pqxx::prepped{"monitoring_insert"}, pqxx::params{*batch});
 				++(m_args->monitoring_vars->monitoring_submissions);
+				m_args->monitoring_vars->monitoring_bytes += batch->length();
 			} catch (std::exception& e){
 				++(m_args->monitoring_vars->monitoring_submissions_failed);
 				std::cerr<<"dbworker mon insert failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;

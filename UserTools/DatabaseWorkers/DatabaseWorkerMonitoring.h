@@ -32,12 +32,17 @@ class DatabaseWorkerMonitoring : public MonitoringVariables {
 	std::atomic<int> jobs_failed;
 	std::atomic<int> thread_crashes; // restarts of tool worker thread (main thread found reader thread 'running' was false)
 	
+	std::atomic<int> logging_bytes;
+	std::atomic<int> monitoring_bytes;
+	
 	std::string toJSON(){
 		
 		std::string s="{\"logging_submissions\":"+std::to_string(logging_submissions.load())
 		             +",\"logging_submissions_failed\":"+std::to_string(logging_submissions_failed.load())
+		             +",\"logging_bytes\":"+std::to_string(logging_bytes.load())
 		             +",\"monitoring_submissions\":"+std::to_string(monitoring_submissions.load())
 		             +",\"monitoring_submissions_failed\":"+std::to_string(monitoring_submissions_failed.load())
+		             +",\"monitoring_bytes\":"+std::to_string(monitoring_bytes.load())
 		             +",\"rootplot_submissions\":"+std::to_string(rootplot_submissions.load())
 		             +",\"rootplot_submissions_failed\":"+std::to_string(rootplot_submissions_failed.load())
 		             +",\"plotlyplot_submissions\":"+std::to_string(plotlyplot_submissions.load())

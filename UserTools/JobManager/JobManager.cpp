@@ -18,6 +18,12 @@ bool JobManager::Initialise(std::string configfile, DataModel &data){
 	
 	ExportConfiguration();
 	
+	// monitoring struct to encapsulate tracking info
+	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
+	m_data->monitoring_variables.emplace(m_tool_name, &monitoring_vars);
+	
+	last_exec = std::chrono::steady_clock::now();
+	
 	return true;
 }
 
@@ -31,19 +37,22 @@ bool JobManager::Execute(){
 		ExportConfiguration();
 	}
 	
-	/* TODO
-	m_data->monitoring_store_mtx.lock();
-	m_data->monitoring_store.Set("pool_threads",worker_pool_manager->NumThreads());
-	m_data->monitoring_store.Set("queued_jobs",m_data->job_queue.size());
-	m_data->monitoring_store_mtx.unlock();
-	// printf("jobmanager q:t = %d:%d\n", m_data->job_queue.size(), worker_pool_manager->NumThreads());
-	usleep(1000);
-	sleep(5);
-	worker_pool_manager->PrintStats();
-	printf("buffersize %u\n", m_data->aggrigation_buffer.size());
-	if(worker_pool_manager->NumThreads()==m_thread_cap)  m_data->services->SendLog("Warning: Worker Pool Threads Maxed" , 0); //make this a warning
-	std::cout<<"globalThreads="<<m_data->num_threads<<std::endl;
-	*/
+	auto time_now = std::chrono::steady_clock::now();
+	double ms_since_last = std::chrono::duration_cast<std::chrono::milliseconds>(time_now-last_exec).count();
+	if(ms_since_last < 1000) return true;
+	last_exec = time_now;
+	
+	monitoring_vars.Set("pool_threads",worker_pool_manager->NumThreads());
+	monitoring_vars.Set("queued_jobs",m_data->job_queue.size());
+	worker_pool_manager->GetStats(monitoring_vars.vars);
+	
+	if(worker_pool_manager->NumThreads()==m_thread_cap) std::cerr<<"Warning: Worker Pool Threads Maxed"<<std::endl;
+	
+	printf("%-20s\tqueued jobs:%d\tactive threads: %d\n",m_tool_name.c_str(), m_data->job_queue.size(), worker_pool_manager->NumThreads());
+	//worker_pool_manager->PrintStats();  // print queued jobs, total workers, per job breakdown etc. trailing blank line...
+	//printf("printing stats\n");
+	//m_data->job_queue.Print();
+	//printf("done printing stats\n");
 	
 	return true;
 }
@@ -54,6 +63,9 @@ bool JobManager::Finalise(){
 	delete worker_pool_manager;
 	worker_pool_manager=nullptr;
 	m_data->num_threads--;
+	
+	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
+	m_data->monitoring_variables.erase(m_tool_name);
 	
 	return true;
 }

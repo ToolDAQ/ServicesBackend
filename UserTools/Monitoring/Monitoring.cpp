@@ -77,13 +77,15 @@ void Monitoring::Thread(Thread_args* args){
 	Monitoring_args* m_args = dynamic_cast<Monitoring_args*>(args);
 	
 	m_args->last_send = std::chrono::steady_clock::now();
-	printf("Monitoring sending stats\n");
+	
+	//printf("Monitoring sending stats\n");
 	
 	std::unique_lock<std::mutex> locker(m_args->m_data->monitoring_variables_mtx);
 	
 	for(std::pair<const std::string, MonitoringVariables*>& mon : m_args->m_data->monitoring_variables){
 		
 		std::string s="{\"topic\":\"Monitoring\", \"time\":\"now()\", \"device\":\"middleman\",\"subject\":\""+mon.first+"\", \"data\":"+mon.second->GetJSON()+"}";
+		//printf("Monitoring sending for tool '%s': %s'\n",mon.first.c_str(), s.c_str());
 		
 		// use multicast so it also not only goes to DB but also shows up on web services
 		std::unique_lock<std::mutex> locker2(m_args->m_data->out_mon_msg_queue_mtx);
