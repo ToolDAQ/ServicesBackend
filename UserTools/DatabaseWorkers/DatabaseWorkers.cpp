@@ -325,21 +325,21 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 		} else {
 			// set up prepared statements. These are, sadly, a property of the connection
 			// logging insert
-			conn->prepare("logging_insert", "INSERT INTO logging ( time, device, severity, message ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, severity int, message text)");
+			conn->prepare("logging_insert", "INSERT INTO logging ( time, device, severity, message ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, device text, severity int, message text)");
 			// monitoring insert
-			conn->prepare("monitoring_insert", "INSERT INTO monitoring ( time, device, subject, data ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, subject text, data jsonb)");
+			conn->prepare("monitoring_insert", "INSERT INTO monitoring ( time, device, subject, data ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, device text, subject text, data json)");
 			// alarms insert
-			conn->prepare("alarms_insert", "INSERT INTO alarms ( time, device, level, alarm ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, level int, alarm text)");
+			conn->prepare("alarms_insert", "INSERT INTO alarms ( time, device, level, alarm ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, device text, level int, alarm text)");
 			// rootplot insert
-			conn->prepare("rootplots_insert", "INSERT INTO rootplots ( time, name, data, draw_options, lifetime ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, data jsonb, draw_options text, lifetime int) returning version");
+			conn->prepare("rootplots_insert", "INSERT INTO rootplots ( time, name, data, draw_options, lifetime ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, name text, data json, draw_options text, lifetime int) returning version");
 			// plotlyplot insert
-			conn->prepare("plotlyplots_insert", "INSERT INTO plotlyplots ( time, name, data, layout, lifetime ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, data jsonb, layout jsonb, lifetime int) returning version");
+			conn->prepare("plotlyplots_insert", "INSERT INTO plotlyplots ( time, name, data, layout, lifetime ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, name text, data json, layout json, lifetime int) returning version");
 			// calibration insert
-			conn->prepare("calibration_insert", "INSERT INTO calibration ( time, name, description, data ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, description text, data jsonb) returning version");
+			conn->prepare("calibration_insert", "INSERT INTO calibration ( time, name, description, data ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, name text, description text, data json) returning version");
 			// device config insert
-			conn->prepare("device_config_insert", "INSERT INTO device_config ( time, device, author, description, data ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, author text, description text, data jsonb) returning version");
+			conn->prepare("device_config_insert", "INSERT INTO device_config ( time, device, author, description, data ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, device text, author text, description text, data json) returning version");
 			// run config insert
-			conn->prepare("run_config_insert", "INSERT INTO run_config ( time, name, author, description, data ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, author text, description text, data jsonb) returning config_id");
+			conn->prepare("run_config_insert", "INSERT INTO run_config ( time, name, author, description, data ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, name text, author text, description text, data json) returning config_id");
 		}
 	}
 	

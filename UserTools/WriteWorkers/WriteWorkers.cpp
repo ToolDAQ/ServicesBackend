@@ -169,10 +169,10 @@ bool WriteWorkers::WriteMessageJob(void*& arg){
 		// (this also means we can prioritise high priority queries such as alarms)
 		// we can do batch insertions with a 'returning version' statement to obtain
 		// a multi-record response with all the corresponding version numbers: e.g.
-		// INSERT INTO rootplots ( time, name, data ) SELECT * FROM jsonb_to_recordset
+		// INSERT INTO rootplots ( time, name, data ) SELECT * FROM json_to_recordset
 		// ('[ {"time":"2025-12-05 23:31", "name":"dev1", "data":{"message":"blah"} },
 		//     {"time":"2025-12-05 23:25", "name":"dev2", "data":{"message":"argg"} } ]')
-		// as t(time timestamptz, name text, data jsonb) returning version;"
+		// as t(time timestamptz, name text, data json) returning version;"
 		// as before, such batches need to be grouped according to destination table
 		switch(query_topic{query.topic()[2]}){
 			case query_topic::alarm:

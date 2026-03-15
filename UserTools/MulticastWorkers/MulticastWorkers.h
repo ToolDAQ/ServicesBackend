@@ -10,7 +10,7 @@
 /**
 * \class MulticastWorkers
 *
-* This Tool uses a worker pool to process batches of multicast messages (received in JSON format), separates them based on their topic (i.e. destination table) and prepares them for insertion into the database by database workers. This preparation may include batching messages, decoding the JSON into SQL, extraction of JSON variables into parameter packs, etc. Presently, it batches the JSON for use with postgres jsonb_to_recordset.
+* This Tool uses a worker pool to process batches of multicast messages (received in JSON format), separates them based on their topic (i.e. destination table) and prepares them for insertion into the database by database workers. This preparation may include batching messages, decoding the JSON into SQL, extraction of JSON variables into parameter packs, etc. Presently, it batches the JSON for use with postgres json_to_recordset.
 *
 * $Author: M. O'Flaherty $
 * $Date: 2025/12/04 $

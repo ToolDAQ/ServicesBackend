@@ -187,15 +187,15 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 	
 	MulticastJobStruct* m_args=static_cast<MulticastJobStruct*>(arg);
 	
-	// most efficient way to do insertion would seem to be via jsonb_to_recordset, which allows batching queries,
+	// most efficient way to do insertion would seem to be via json_to_recordset, which allows batching queries,
 	// query optimisation similar to 'unnest', and avoids the overhead of parsing the JSON: e.g.
 	// psql -c "INSERT INTO logging ( time, device, severity, message ) SELECT * FROM 
-	// jsonb_to_recordset('[ {\"time\":\"2025-12-01 12:31\", \"device\":\"dev1\", \"severity\":1, \"message\":\"blah\"},
+	// json_to_recordset('[ {\"time\":\"2025-12-01 12:31\", \"device\":\"dev1\", \"severity\":1, \"message\":\"blah\"},
 	//                       {\"time\":\"2025-12-02 15:25\", \"device\":\"dev2\", \"severity\":2, \"message\":\"arg\"} ]')
 	// as t(time timestamptz, device text, severity int, message text);"  << (this part is needed)
 	
 	// or:
-	// PREPARE loginsert ( text ) AS INSERT INTO logging ( time, device, severity, message ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, severity int, message text);
+	// PREPARE loginsert ( text ) AS INSERT INTO logging ( time, device, severity, message ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, device text, severity int, message text);
 	// then:
 	// execute loginsert('[ {"time":"2025-12-01 12:31", "device":"dev1", "severity":1, "message":"blah"}, {"time":"2025-12-02 15:25", "device":"dev2", "severity":2, "message":"oooh"} ]');
 	
@@ -382,11 +382,11 @@ void MulticastWorkers::MulticastMessageJob(void* arg){
 	
 	// v5: just insert the JSON directly 5-head
 	// psql -c "INSERT INTO logging ( time, device, severity, message ) SELECT * FROM 
-	// jsonb_to_recordset('[ {\"time\":\"2025-12-01 12:31\", \"device\":\"dev1\", \"severity\":1, \"message\":\"blah\"},
+	// json_to_recordset('[ {\"time\":\"2025-12-01 12:31\", \"device\":\"dev1\", \"severity\":1, \"message\":\"blah\"},
 	//                       {\"time\":\"2025-12-02 15:25\", \"device\":\"dev2\", \"severity\":2, \"message\":\"arg\"} ]')
 	// as t(time timestamptz, device text, severity int, message text);"  << this part is needed
 	
-	PREPARE moninsert ( text ) as INSERT INTO monitoring ( time, device, subject, data ) select * from jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, subject text, data jsonb );
+	PREPARE moninsert ( text ) as INSERT INTO monitoring ( time, device, subject, data ) select * from json_to_recordset( $1::json ) as t(time timestamptz, device text, subject text, data json );
 	execute moninsert('[ {"time":"2025-12-03 12:22", "device":"dev3", "subject":"test", "data":{"testkey":"testval", "key2":3} }, {"time":"2025-12-03 13:23", "device":"dev3", "subject":"test", "data":{"testkey":"testval2", "key2":4} } ]' );
 	
 	//==================
