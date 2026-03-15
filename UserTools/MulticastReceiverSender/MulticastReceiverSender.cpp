@@ -43,7 +43,6 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 	
 	// buffer received messages in a local vector until size exceeds local_buffer_size...
 	m_variables.Get("local_buffer_size",local_buffer_size);
-	local_buffer_size *=MAX_UDP_PACKET_SIZE; // units are messages
 	// ... or time since last transfer exceeds transfer_period_ms
 	m_variables.Get("transfer_period_ms",transfer_period_ms);
 	m_variables.Get("poll_timeout_ms",poll_timeout_ms);
@@ -168,23 +167,18 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 	thread_args.poll = zmq::pollitem_t{NULL, socket_handle, ZMQ_POLLIN, 0};
 	thread_args.poll_timeout_ms = poll_timeout_ms;
 	thread_args.local_buffer_size = local_buffer_size;
-	thread_args.message = m_data->multicast_batch_pool.GetNew();
-	thread_args.message->resize(local_buffer_size);
-	(*thread_args.message)[0]='[';
-	thread_args.offset=1;
-	thread_args.do_transfer=false;
+	thread_args.in_local_queue = m_data->multicast_buffer_pool.GetNew(local_buffer_size);
+	thread_args.in_local_queue->resize(0);
 	thread_args.last_transfer = std::chrono::steady_clock::now();
 	thread_args.transfer_period_ms = std::chrono::milliseconds{transfer_period_ms};
+	thread_args.in_queue = &m_data->in_multicast_msg_queue;
+	thread_args.in_queue_mtx = &m_data->in_multicast_msg_queue_mtx;
 	if(type_str=="logging"){
 		thread_args.out_queue = &m_data->out_log_msg_queue;
 		thread_args.out_queue_mtx = &m_data->out_log_msg_queue_mtx;
-		thread_args.in_queue = &m_data->log_query_queue;
-		thread_args.in_queue_mtx = &m_data->log_query_queue_mtx;
 	} else {
 		thread_args.out_queue = &m_data->out_mon_msg_queue;
 		thread_args.out_queue_mtx = &m_data->out_mon_msg_queue_mtx;
-		thread_args.in_queue = &m_data->mon_query_queue;
-		thread_args.in_queue_mtx = &m_data->mon_query_queue_mtx;
 	}
 	
 	// thread needs a unique name
@@ -233,7 +227,7 @@ bool MulticastReceiverSender::Execute(){
 	double receive_rate_MBps = 1E-3*(bytes_in - last_bytes_in)/ms_since_last;
 	double send_rate_MBps = 1E-3*(bytes_out - last_bytes_out)/ms_since_last;
 	
-	//monitoring_vars.Set("buffered_in_messages",thread_args.in_local_queue->size());
+	monitoring_vars.Set("buffered_in_messages",thread_args.in_local_queue->size());
 	monitoring_vars.Set("waiting_out_messages",thread_args.out_local_queue.size());
 	monitoring_vars.Set("receive_rate_MB/s",receive_rate_MBps);
 	monitoring_vars.Set("send_rate_MB/s",send_rate_MBps);
@@ -302,25 +296,18 @@ void MulticastReceiverSender::Thread(Thread_args* arg){
 	
 	// transfer to datamodel
 	// =====================
-	if(m_args->offset!=1 &&
-	    (m_args->do_transfer ||
+	if(!m_args->in_local_queue->empty() &&
+	   ((m_args->in_local_queue->size()>m_args->local_buffer_size) ||
 	    (std::chrono::steady_clock::now() - m_args->last_transfer) > m_args->transfer_period_ms) ){
 		
-		(*m_args->message)[m_args->offset-1]=']';
-		
 		//printf("adding %d %s messages to datamodel\n",m_args->in_local_queue->size(), m_args->m_tool_name.c_str());
-		//printf("transfer with offset %d, do_transfer %d, message '%s'\n",m_args->offset, m_args->do_transfer, m_args->message->c_str());
 		
-		m_args->message->resize(m_args->offset);
 		std::unique_lock<std::mutex> locker(*m_args->in_queue_mtx);
-		m_args->in_queue->push_back(m_args->message);
+		m_args->in_queue->push_back(m_args->in_local_queue);
 		locker.unlock();
 		
-		m_args->message = m_data->multicast_batch_pool.GetNew();
-		m_args->message->resize(m_args->local_buffer_size);
-		(*m_args->message)[0]='[';
-		m_args->offset=1;
-		m_args->do_transfer=false;
+		m_args->in_local_queue = m_data->multicast_buffer_pool.GetNew(m_args->local_buffer_size);
+		m_args->in_local_queue->resize(0);
 		
 		m_args->last_transfer = std::chrono::steady_clock::now();
 		++(m_args->monitoring_vars->in_buffer_transfers);
@@ -358,8 +345,7 @@ void MulticastReceiverSender::Thread(Thread_args* arg){
 		//printf("%s receiving message\n",m_args->m_tool_name.c_str());
 		
 		// read the messge
-		m_args->get_ok = recvfrom(m_args->socket, m_args->message->data()+m_args->offset, MAX_UDP_PACKET_SIZE, 0, (struct sockaddr*)&m_args->addr, &m_args->addrlen);
-		//printf("received %d bytes, offset now %d, last char is '%x', then %x\n",m_args->get_ok, m_args->offset, (*m_args->message)[m_args->offset+m_args->get_ok-1], (*m_args->message)[m_args->offset+m_args->get_ok-2]);
+		m_args->get_ok = recvfrom(m_args->socket, m_args->message, MAX_UDP_PACKET_SIZE, 0, (struct sockaddr*)&m_args->addr, &m_args->addrlen);
 		if(m_args->get_ok <= 0){
 			++(m_args->monitoring_vars->rcv_fails);
 			// FIXME better logging
@@ -374,9 +360,7 @@ void MulticastReceiverSender::Thread(Thread_args* arg){
 			//m_data->Log("Received multicast message '"+std::string(m_args->message)
 			//            +"' from "+std::string{inet_ntoa(&m_args->addr->sin_addr)},12);
 			
-			m_args->offset += m_args->get_ok+1;
-			(*m_args->message)[m_args->offset-1]=',';
-			m_args->do_transfer= ((m_args->local_buffer_size - m_args->offset) < MAX_UDP_PACKET_SIZE);
+			m_args->in_local_queue->emplace_back(m_args->message);
 			
 		}
 	}
