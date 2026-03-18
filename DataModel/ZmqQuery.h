@@ -22,6 +22,12 @@ struct ZmqQuery {
 	
 	// 4 parts for receiving, for sending 3+ parts
 	std::vector<zmq::message_t> parts{4};
+	
+	// if compression is used, read queries store the decompressed version
+	// for write queries the decompressed versions get batched into a QueryBatch
+	// so this member is unused
+	std::string decompress_buffer;
+	
 	size_t size() const {
 		return parts.size();
 	}
@@ -46,6 +52,10 @@ struct ZmqQuery {
 		return std::string_view{(const char*)parts[2].data(),parts[2].size()};
 	}
 	std::string_view msg(){
+		if(parts[3].size() && ((char*)parts[3].data())[0]=='(') return std::string_view{decompress_buffer};
+		return std::string_view{(const char*)parts[3].data(),parts[3].size()};
+	}
+	std::string_view msg_raw(){
 		return std::string_view{(const char*)parts[3].data(),parts[3].size()};
 	}
 	
@@ -64,6 +74,7 @@ struct ZmqQuery {
 	void Clear(){
 		result.clear();
 		err.clear();
+		decompress_buffer.clear();
 	}
 	
 	// for setting responses of read queries

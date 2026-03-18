@@ -26,6 +26,9 @@ class MonitoringVariables;
  *
 */
 
+// some max size to prevent decompression buffer being resized to something absurd in case of strangeness
+const size_t MAX_DECOMPRESSED_MSG_SIZE=655356;
+
 using namespace ToolFramework;
 
 class DataModel : public DAQDataModelBase {
@@ -41,6 +44,10 @@ class DataModel : public DAQDataModelBase {
 	// will periodically invoke UpdateConnections to connect clients
 	std::map<std::string, ManagedSocket*> managed_sockets;
 	std::mutex managed_sockets_mtx;
+	
+	// when a new config is loaded, we pre-fetch it so that we don't need to
+	// go back to the database for every device
+	std::map<std::string, std::string> cached_configs;
 	
 	Pool<Job> job_pool; ///< pool of job structures to encapsulate jobs
 	JobQueue job_queue; ///< job queue to submit jobs to job manager
@@ -124,6 +131,12 @@ class DataModel : public DAQDataModelBase {
 	/* ----------------------------------------- */
 	std::vector<QueryBatch*> write_query_queue;
 	std::mutex write_query_queue_mtx;
+	
+	/* ----------------------------------------- */
+	/*                ReadWorkers               */
+	/* ----------------------------------------- */
+	std::vector<QueryBatch*> read_query_queue;
+	std::mutex read_query_queue_mtx;
 	
 	/* ----------------------------------------- */
 	/*               DatabaseWorkers             */

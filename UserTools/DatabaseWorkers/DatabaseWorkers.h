@@ -94,6 +94,7 @@ class DatabaseWorkers: public Tool {
 	
 	private:
 	static void Thread(Thread_args* args);
+	void CacheConfigs(const char* alertname, const char* payload); ///< cache configs for upcoming config change
 	DatabaseJobDistributor_args thread_args;
 	DatabaseWorkerMonitoring monitoring_vars;
 	

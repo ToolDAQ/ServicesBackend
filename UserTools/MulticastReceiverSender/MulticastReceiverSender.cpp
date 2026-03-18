@@ -360,7 +360,7 @@ void MulticastReceiverSender::Thread(Thread_args* arg){
 			//m_data->Log("Received multicast message '"+std::string(m_args->message)
 			//            +"' from "+std::string{inet_ntoa(&m_args->addr->sin_addr)},12);
 			
-			m_args->in_local_queue->emplace_back(m_args->message);
+			m_args->in_local_queue->emplace_back(std::string_view(m_args->message,m_args->get_ok));
 			
 		}
 	}
@@ -375,6 +375,7 @@ void MulticastReceiverSender::Thread(Thread_args* arg){
 		std::string& message = m_args->out_local_queue[m_args->out_i++]; // always increment, even if error
 		
 		// send it
+		//printf("sending mon msg: '%s'\n",message.c_str());
 		m_args->get_ok = sendto(m_args->socket, message.c_str(), message.length(), 0, (struct sockaddr*)&m_args->addr, m_args->addrlen);
 		
 		// check success

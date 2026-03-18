@@ -271,7 +271,7 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 				m_args->make_new=true;
 				++(m_args->monitoring_vars->msgs_rcvd);
 				// XXX
-				//printf("%s received query %u, '%s' message '%s' into ZmqQuery at %p\n",m_args->m_tool_name.c_str(), msg_buf.msg_id(), msg_buf.topic().data(), msg_buf.msg().data(), &msg_buf);
+				//printf("%s received query %u, '%s' message '%s' into ZmqQuery at %p\n",m_args->m_tool_name.c_str(), msg_buf.msg_id(), msg_buf.topic().data(), msg_buf.msg_raw().data(), &msg_buf);
 				
 			}
 			

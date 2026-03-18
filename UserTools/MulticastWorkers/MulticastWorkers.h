@@ -2,6 +2,7 @@
 #define MulticastWorkers_H
 
 #include <iostream>
+#include <zstd.h>
 
 #include "Tool.h"
 #include "DataModel.h"
@@ -33,6 +34,9 @@ struct MulticastJobStruct {
 	std::string* out_buffer;
 	int n_log_msgs;
 	int n_mon_msgs;
+	size_t decompressed_bytes;
+	std::string decompress_buffer;
+	std::string_view the_msg;
 	
 };
 

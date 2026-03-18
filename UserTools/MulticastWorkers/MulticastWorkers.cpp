@@ -2,7 +2,6 @@
 
 MulticastWorkers::MulticastWorkers():Tool(){}
 
-
 bool MulticastWorkers::Initialise(std::string configfile, DataModel &data){
 	
 	InitialiseTool(data);
@@ -187,6 +186,8 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 	
 	MulticastJobStruct* m_args=static_cast<MulticastJobStruct*>(arg);
 	
+	thread_local std::unique_ptr<ZSTD_DCtx,long unsigned int(*)(ZSTD_DCtx*)> zstd_ctx(ZSTD_createDCtx(), ZSTD_freeDCtx);
+	
 	// most efficient way to do insertion would seem to be via json_to_recordset, which allows batching queries,
 	// query optimisation similar to 'unnest', and avoids the overhead of parsing the JSON: e.g.
 	// psql -c "INSERT INTO logging ( time, device, severity, message ) SELECT * FROM 
@@ -214,19 +215,46 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 	// loop over messages
 	for(std::string& next_msg : *m_args->msg_buffer){
 		
+		//printf("next monitoring msg: '%s'\n",next_msg.c_str());
+		// message may be compressed or decompressed, as indicated by first bye
+		if(next_msg[0]=='{'){
+			m_args->the_msg = std::string_view(next_msg.c_str(),next_msg.size());
+		} else {
+			// compressed - decompress it
+			m_args->decompressed_bytes = ZSTD_getFrameContentSize(next_msg.data(), next_msg.size());
+			if(m_args->decompressed_bytes==ZSTD_CONTENTSIZE_UNKNOWN || m_args->decompressed_bytes==ZSTD_CONTENTSIZE_ERROR){
+				// bad message, discard // FIXME log it
+				printf("%s ignoring zstd bad multicast message '%s'\n",m_args->m_job_name.c_str(), next_msg.c_str());
+				continue;
+			}
+			if(m_args->decompressed_bytes > MAX_DECOMPRESSED_MSG_SIZE){
+				printf("%s ignoring zstd message requesting excessive '%lu' byte decompression buffer\n",
+				       m_args->m_job_name.c_str(), m_args->decompressed_bytes);
+				continue;
+			}
+			m_args->decompress_buffer.resize(m_args->decompressed_bytes);
+			m_args->decompressed_bytes = ZSTD_decompressDCtx(zstd_ctx.get(),(void*)m_args->decompress_buffer.data(),m_args->decompressed_bytes, next_msg.data(), next_msg.size());
+			if(ZSTD_isError(m_args->decompressed_bytes)){
+				printf("%s error decompressing zstd message: %s\n", // FIXME is it even useful to log these?
+				       m_args->m_job_name.c_str(), ZSTD_getErrorName(m_args->decompressed_bytes));
+				continue;
+			}
+			m_args->the_msg = std::string_view(m_args->decompress_buffer.c_str(),m_args->decompressed_bytes);
+		}
+		
 		// we can't batch insertions destined for different tables,
 		// so keep each message type (topic) in a different buffer.
 		// the Services class always puts the topic first,
 		// and all topics start with a unique character (XXX for now?),
 		// so we don't need to parse the message to identify the topic:
-//		printf("validating first 9 chars are topic: '%s', %d\n",next_msg.substr(0,9).c_str(),strcmp(next_msg.substr(0,9).c_str(),"{\"topic\":"));
-		if(next_msg.substr(0,9)!="{\"topic\":"){
+//		printf("validating first 9 chars are topic: '%s', %d\n",m_args->the_msg.substr(0,9).c_str(),strcmp(m_args->the_msg.substr(0,9).c_str(),"{\"topic\":"));
+		if(m_args->the_msg.substr(0,9)!="{\"topic\":"){
 			// FIXME log it as bad multicast
-			printf("%s ignoring bad multicast message '%s'\n",m_args->m_job_name.c_str(), next_msg.c_str());
+			printf("%s ignoring bad multicast message '%.*s'\n",m_args->m_job_name.c_str(), m_args->the_msg.size(), m_args->the_msg.data());
 			continue;
 		}
 		
-		switch(query_topic{next_msg[10]}){
+		switch(query_topic{(m_args->the_msg)[10]}){
 			case query_topic::logging:
 				m_args->out_buffer = m_args->logging_buffer;
 				++m_args->n_log_msgs;
@@ -242,15 +270,16 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 				m_args->out_buffer = m_args->plotlyplot_buffer;
 				break;
 			default:
-				printf("%s unknown multicast topic '%c' in message '%s'\n",m_args->m_job_name.c_str(), next_msg[10],next_msg.c_str());
+				printf("%s unknown multicast topic '%c' in message '%.*s'\n",m_args->m_job_name.c_str(), (m_args->the_msg)[10],m_args->the_msg.size(), m_args->the_msg.data());
 				continue; // FIXME unknown topic: error log it.
 		}
 		
+		// FIXME can we make this use moving write-head instead of copying?
 		if(m_args->out_buffer->length()>1) (*m_args->out_buffer) += ", ";
-		(*m_args->out_buffer) += next_msg;
-		//printf("%s added message '%s'\n",m_args->m_job_name.c_str(), next_msg.c_str());
+		(*m_args->out_buffer) += m_args->the_msg;
+		//printf("%s added message '%s'\n",m_args->m_job_name.c_str(), m_args->the_msg.c_str());
 		
-		m_args->monitoring_vars->bytes_processed += next_msg.size(); // FIXME assumes this job completes successfully
+		m_args->monitoring_vars->bytes_processed += m_args->the_msg.size(); // FIXME assumes this job completes successfully
 		
 	}
 	
@@ -264,6 +293,7 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 	
 	if(m_args->monitoring_buffer->length()!=1){
 		*m_args->monitoring_buffer += "]";
+		//printf("pushing batch message: '%s'\n",m_args->monitoring_buffer->c_str());
 		std::unique_lock<std::mutex> locker(m_args->m_data->mon_query_queue_mtx);
 		m_args->m_data->mon_query_queue.push_back(m_args->monitoring_buffer);
 	}
