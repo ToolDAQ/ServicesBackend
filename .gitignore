@@ -38,3 +38,4 @@ lib/*
 # the include folder is actually automatically populated
 include/*
 
+middleman_runs.log
