@@ -153,6 +153,8 @@ bool WriteWorkers::WriteMessageJob(void*& arg){
 	
 	WriteJobStruct* m_args = static_cast<WriteJobStruct*>(arg);
 	
+	thread_local std::unique_ptr<ZSTD_DCtx,long unsigned int(*)(ZSTD_DCtx*)> zstd_ctx(ZSTD_createDCtx(), ZSTD_freeDCtx);
+	
 	//m_args->local_msg_queue->push_time("writeworker_start");
 	
 	//printf("%s job processing %d queries\n", m_args->m_job_name.c_str(), m_args->local_msg_queue->queries.size());
@@ -164,15 +166,47 @@ bool WriteWorkers::WriteMessageJob(void*& arg){
 		
 		ZmqQuery& query = m_args->local_msg_queue->queries[i];
 		
+		if(query.msg_raw()[0]=='{'){
+			m_args->the_msg = query.msg_raw();
+		} else {
+			// compressed - decompress it
+			m_args->decompressed_bytes = ZSTD_getFrameContentSize(query.parts[3].data(), query.parts[3].size());
+			if(m_args->decompressed_bytes==ZSTD_CONTENTSIZE_UNKNOWN || m_args->decompressed_bytes==ZSTD_CONTENTSIZE_ERROR){
+				// bad message, discard // FIXME log it
+				printf("%s ignoring zstd bad write message '%.*s'\n",m_args->m_job_name.c_str(), query.msg_raw().size(), query.msg_raw().data());
+				query.err = "bad zstd size";
+				continue;
+			}
+			if(m_args->decompressed_bytes > MAX_DECOMPRESSED_MSG_SIZE){
+				printf("%s ignoring zstd message requesting excessive '%lu' byte decompression buffer\n",
+				       m_args->m_job_name.c_str(), m_args->decompressed_bytes);
+				query.err = "zstd too large decompressed size";
+				continue;
+			}
+			// FIXME move this to moving write head to avoid copying
+			// BUT note in that case generic queries aren't added to the buffer, so need to still use query buffer.
+			query.decompress_buffer.resize(m_args->decompressed_bytes);
+			m_args->decompressed_bytes = ZSTD_decompressDCtx(zstd_ctx.get(),(void*)query.decompress_buffer.data(),m_args->decompressed_bytes, query.parts[3].data(), query.parts[3].size());
+			 if(ZSTD_isError(m_args->decompressed_bytes)){
+				printf("%s error decompressing zstd message from %.*s: %s\n", // FIXME log these
+				       m_args->m_job_name.c_str(), query.client_id().size(), query.client_id().data(), ZSTD_getErrorName(m_args->decompressed_bytes));
+				query.err = "zstd decompression error";
+				continue;
+			}
+			m_args->the_msg = std::string_view(query.decompress_buffer.data(),m_args->decompressed_bytes);
+		}
+		// XXX 
+		//printf("WriteWorker processing %.*s query '%.*s'\n",query.topic().size(),query.topic().data(),m_args->the_msg.size(), m_args->the_msg.data());
+		
 		// we can only batch queries destined for the same table,
 		// so we need to split our messages up into different queues
 		// (this also means we can prioritise high priority queries such as alarms)
 		// we can do batch insertions with a 'returning version' statement to obtain
 		// a multi-record response with all the corresponding version numbers: e.g.
-		// INSERT INTO rootplots ( time, name, data ) SELECT * FROM jsonb_to_recordset
+		// INSERT INTO rootplots ( time, name, data ) SELECT * FROM json_to_recordset
 		// ('[ {"time":"2025-12-05 23:31", "name":"dev1", "data":{"message":"blah"} },
 		//     {"time":"2025-12-05 23:25", "name":"dev2", "data":{"message":"argg"} } ]')
-		// as t(time timestamptz, name text, data jsonb) returning version;"
+		// as t(time timestamptz, name text, data json) returning version;"
 		// as before, such batches need to be grouped according to destination table
 		switch(query_topic{query.topic()[2]}){
 			case query_topic::alarm:
@@ -183,8 +217,11 @@ bool WriteWorkers::WriteMessageJob(void*& arg){
 			case query_topic::dev_config:
 				m_args->out_buffer = &m_args->local_msg_queue->devconfig_buffer;
 				break;
-			case query_topic::run_config:
-				m_args->out_buffer = &m_args->local_msg_queue->runconfig_buffer;
+			case query_topic::base_config:
+				m_args->out_buffer = &m_args->local_msg_queue->base_config_buffer;
+				break;
+			case query_topic::runmode_config:
+				m_args->out_buffer = &m_args->local_msg_queue->runmode_config_buffer;
 				break;
 			case query_topic::calibration:
 				m_args->out_buffer = &m_args->local_msg_queue->calibration_buffer;
@@ -207,7 +244,7 @@ bool WriteWorkers::WriteMessageJob(void*& arg){
 		}
 		
 		if(m_args->out_buffer->length()>1) (*m_args->out_buffer) += ", ";
-		(*m_args->out_buffer) += query.msg();
+		(*m_args->out_buffer) += m_args->the_msg;
 		
 		++(m_args->monitoring_vars->msgs_processed);
 		

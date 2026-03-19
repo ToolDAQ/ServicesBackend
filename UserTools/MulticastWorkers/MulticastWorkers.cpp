@@ -2,7 +2,6 @@
 
 MulticastWorkers::MulticastWorkers():Tool(){}
 
-
 bool MulticastWorkers::Initialise(std::string configfile, DataModel &data){
 	
 	InitialiseTool(data);
@@ -35,6 +34,8 @@ bool MulticastWorkers::Initialise(std::string configfile, DataModel &data){
 	}
 	m_data->num_threads++;
 	
+	last_exec = std::chrono::steady_clock::now();
+	
 	return true;
 }
 
@@ -48,6 +49,19 @@ bool MulticastWorkers::Execute(){
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		++(monitoring_vars.thread_crashes);
 	}
+	
+	auto time_now = std::chrono::steady_clock::now();
+	auto time_since_last = time_now - last_exec;
+	if(time_since_last < std::chrono::milliseconds(1000)) return true;
+	last_exec = time_now;
+	
+	printf("messages processed: %d (%.0f MB),\t logs: %d (%.0f MB),\tmons: %d (%.0f MB)\n",
+	       monitoring_vars.msgs_processed.load(),
+	       double(monitoring_vars.bytes_processed.load())/1E6,
+	       monitoring_vars.logs_processed.load(),
+	       double(monitoring_vars.logging_bytes_processed.load())/1E6,
+	       monitoring_vars.mons_processed.load(),
+	       double(monitoring_vars.monitoring_bytes_processed.load())/1E6);
 	
 	return true;
 }
@@ -121,6 +135,7 @@ void MulticastWorkers::Thread(Thread_args* args){
 		//multicast_jobs.AddJob(the_job);
 		//printf("spawning new multicastjob for %d messages\n",job_data->msg_buffer->size());
 		m_args->m_data->job_queue.AddJob(the_job);
+		//++(m_args->monitoring_vars.jobs_submitted);
 		
 	}
 	
@@ -171,15 +186,17 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 	
 	MulticastJobStruct* m_args=static_cast<MulticastJobStruct*>(arg);
 	
-	// most efficient way to do insertion would seem to be via jsonb_to_recordset, which allows batching queries,
+	thread_local std::unique_ptr<ZSTD_DCtx,long unsigned int(*)(ZSTD_DCtx*)> zstd_ctx(ZSTD_createDCtx(), ZSTD_freeDCtx);
+	
+	// most efficient way to do insertion would seem to be via json_to_recordset, which allows batching queries,
 	// query optimisation similar to 'unnest', and avoids the overhead of parsing the JSON: e.g.
 	// psql -c "INSERT INTO logging ( time, device, severity, message ) SELECT * FROM 
-	// jsonb_to_recordset('[ {\"time\":\"2025-12-01 12:31\", \"device\":\"dev1\", \"severity\":1, \"message\":\"blah\"},
+	// json_to_recordset('[ {\"time\":\"2025-12-01 12:31\", \"device\":\"dev1\", \"severity\":1, \"message\":\"blah\"},
 	//                       {\"time\":\"2025-12-02 15:25\", \"device\":\"dev2\", \"severity\":2, \"message\":\"arg\"} ]')
 	// as t(time timestamptz, device text, severity int, message text);"  << (this part is needed)
 	
 	// or:
-	// PREPARE loginsert ( text ) AS INSERT INTO logging ( time, device, severity, message ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, severity int, message text);
+	// PREPARE loginsert ( text ) AS INSERT INTO logging ( time, device, severity, message ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, device text, severity int, message text);
 	// then:
 	// execute loginsert('[ {"time":"2025-12-01 12:31", "device":"dev1", "severity":1, "message":"blah"}, {"time":"2025-12-02 15:25", "device":"dev2", "severity":2, "message":"oooh"} ]');
 	
@@ -192,27 +209,59 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 	*m_args->rootplot_buffer = "[";
 	*m_args->plotlyplot_buffer = "[";
 	
+	m_args->n_log_msgs = 0;
+	m_args->n_mon_msgs = 0;
+	
 	// loop over messages
 	for(std::string& next_msg : *m_args->msg_buffer){
+		
+		//printf("next monitoring msg: '%s'\n",next_msg.c_str());
+		// message may be compressed or decompressed, as indicated by first bye
+		if(next_msg[0]=='{'){
+			m_args->the_msg = std::string_view(next_msg.c_str(),next_msg.size());
+		} else {
+			// compressed - decompress it
+			m_args->decompressed_bytes = ZSTD_getFrameContentSize(next_msg.data(), next_msg.size());
+			if(m_args->decompressed_bytes==ZSTD_CONTENTSIZE_UNKNOWN || m_args->decompressed_bytes==ZSTD_CONTENTSIZE_ERROR){
+				// bad message, discard // FIXME log it
+				printf("%s ignoring zstd bad multicast message '%s'\n",m_args->m_job_name.c_str(), next_msg.c_str());
+				continue;
+			}
+			if(m_args->decompressed_bytes > MAX_DECOMPRESSED_MSG_SIZE){
+				printf("%s ignoring zstd message requesting excessive '%lu' byte decompression buffer\n",
+				       m_args->m_job_name.c_str(), m_args->decompressed_bytes);
+				continue;
+			}
+			m_args->decompress_buffer.resize(m_args->decompressed_bytes);
+			m_args->decompressed_bytes = ZSTD_decompressDCtx(zstd_ctx.get(),(void*)m_args->decompress_buffer.data(),m_args->decompressed_bytes, next_msg.data(), next_msg.size());
+			if(ZSTD_isError(m_args->decompressed_bytes)){
+				printf("%s error decompressing zstd message: %s\n", // FIXME is it even useful to log these?
+				       m_args->m_job_name.c_str(), ZSTD_getErrorName(m_args->decompressed_bytes));
+				continue;
+			}
+			m_args->the_msg = std::string_view(m_args->decompress_buffer.c_str(),m_args->decompressed_bytes);
+		}
 		
 		// we can't batch insertions destined for different tables,
 		// so keep each message type (topic) in a different buffer.
 		// the Services class always puts the topic first,
 		// and all topics start with a unique character (XXX for now?),
 		// so we don't need to parse the message to identify the topic:
-//		printf("validating first 9 chars are topic: '%s', %d\n",next_msg.substr(0,9).c_str(),strcmp(next_msg.substr(0,9).c_str(),"{\"topic\":"));
-		if(next_msg.substr(0,9)!="{\"topic\":"){
+//		printf("validating first 9 chars are topic: '%s', %d\n",m_args->the_msg.substr(0,9).c_str(),strcmp(m_args->the_msg.substr(0,9).c_str(),"{\"topic\":"));
+		if(m_args->the_msg.substr(0,9)!="{\"topic\":"){
 			// FIXME log it as bad multicast
-			printf("%s ignoring bad multicast message '%s'\n",m_args->m_job_name.c_str(), next_msg.c_str());
+			printf("%s ignoring bad multicast message '%.*s'\n",m_args->m_job_name.c_str(), m_args->the_msg.size(), m_args->the_msg.data());
 			continue;
 		}
 		
-		switch(query_topic{next_msg[10]}){
+		switch(query_topic{(m_args->the_msg)[10]}){
 			case query_topic::logging:
 				m_args->out_buffer = m_args->logging_buffer;
+				++m_args->n_log_msgs;
 				break;
 			case query_topic::monitoring:
 				m_args->out_buffer = m_args->monitoring_buffer;
+				++m_args->n_mon_msgs;
 				break;
 			case query_topic::rootplot:
 				m_args->out_buffer = m_args->rootplot_buffer;
@@ -221,15 +270,16 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 				m_args->out_buffer = m_args->plotlyplot_buffer;
 				break;
 			default:
-				printf("%s unknown multicast topic '%c' in message '%s'\n",m_args->m_job_name.c_str(), next_msg[10],next_msg.c_str());
+				printf("%s unknown multicast topic '%c' in message '%.*s'\n",m_args->m_job_name.c_str(), (m_args->the_msg)[10],m_args->the_msg.size(), m_args->the_msg.data());
 				continue; // FIXME unknown topic: error log it.
 		}
 		
+		// FIXME can we make this use moving write-head instead of copying?
 		if(m_args->out_buffer->length()>1) (*m_args->out_buffer) += ", ";
-		(*m_args->out_buffer) += next_msg;
-		//printf("%s added message '%s'\n",m_args->m_job_name.c_str(), next_msg.c_str());
+		(*m_args->out_buffer) += m_args->the_msg;
+		//printf("%s added message '%s'\n",m_args->m_job_name.c_str(), m_args->the_msg.c_str());
 		
-		++(m_args->monitoring_vars->msgs_processed);
+		m_args->monitoring_vars->bytes_processed += m_args->the_msg.size(); // FIXME assumes this job completes successfully
 		
 	}
 	
@@ -243,6 +293,7 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 	
 	if(m_args->monitoring_buffer->length()!=1){
 		*m_args->monitoring_buffer += "]";
+		//printf("pushing batch message: '%s'\n",m_args->monitoring_buffer->c_str());
 		std::unique_lock<std::mutex> locker(m_args->m_data->mon_query_queue_mtx);
 		m_args->m_data->mon_query_queue.push_back(m_args->monitoring_buffer);
 	}
@@ -265,6 +316,12 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 	
 	//printf("%s job completed\n",m_args->m_job_name.c_str());
 	++(m_args->monitoring_vars->jobs_completed);
+	m_args->monitoring_vars->msgs_processed += m_args->msg_buffer->size();
+	m_args->monitoring_vars->logs_processed += m_args->n_log_msgs;
+	m_args->monitoring_vars->mons_processed += m_args->n_mon_msgs;
+	m_args->monitoring_vars->logging_bytes_processed += m_args->logging_buffer->length() - 2 - m_args->n_log_msgs;
+	m_args->monitoring_vars->monitoring_bytes_processed += m_args->monitoring_buffer->length() - 2 - m_args->n_mon_msgs;
+	
 	
 	m_args->m_pool->Add(m_args);  // return our job args to the job args struct pool
 	m_args = nullptr;  // clear the local m_args variable... not strictly necessary
@@ -355,11 +412,11 @@ void MulticastWorkers::MulticastMessageJob(void* arg){
 	
 	// v5: just insert the JSON directly 5-head
 	// psql -c "INSERT INTO logging ( time, device, severity, message ) SELECT * FROM 
-	// jsonb_to_recordset('[ {\"time\":\"2025-12-01 12:31\", \"device\":\"dev1\", \"severity\":1, \"message\":\"blah\"},
+	// json_to_recordset('[ {\"time\":\"2025-12-01 12:31\", \"device\":\"dev1\", \"severity\":1, \"message\":\"blah\"},
 	//                       {\"time\":\"2025-12-02 15:25\", \"device\":\"dev2\", \"severity\":2, \"message\":\"arg\"} ]')
 	// as t(time timestamptz, device text, severity int, message text);"  << this part is needed
 	
-	PREPARE moninsert ( text ) as INSERT INTO monitoring ( time, device, subject, data ) select * from jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, subject text, data jsonb );
+	PREPARE moninsert ( text ) as INSERT INTO monitoring ( time, device, subject, data ) select * from json_to_recordset( $1::json ) as t(time timestamptz, device text, subject text, data json );
 	execute moninsert('[ {"time":"2025-12-03 12:22", "device":"dev3", "subject":"test", "data":{"testkey":"testval", "key2":3} }, {"time":"2025-12-03 13:23", "device":"dev3", "subject":"test", "data":{"testkey":"testval2", "key2":4} } ]' );
 	
 	//==================

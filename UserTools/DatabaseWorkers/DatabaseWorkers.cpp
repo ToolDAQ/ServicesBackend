@@ -104,6 +104,11 @@ bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 		return false;
 	}
 	
+	// set a callback to cache configurations for upcoming run
+	m_data->sc_vars.AlertSubscribe("CacheConfig", std::bind(&DatabaseWorkers::CacheConfigs, this, std::placeholders::_1, std::placeholders::_1));
+	
+	last_exec = std::chrono::steady_clock::now();
+	
 	return true;
 }
 
@@ -122,6 +127,19 @@ bool DatabaseWorkers::Execute(){
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		++(monitoring_vars.thread_crashes);
 	}
+	
+	auto time_now = std::chrono::steady_clock::now();
+	auto time_since_last = time_now - last_exec;
+	if(time_since_last < std::chrono::milliseconds(1000)) return true;
+	last_exec = time_now;
+	
+	printf("%-20s\tlogs processed: %d\tbytes: %d\tmons processed:%d\tbytes: %d\tjobs completed: %d\n",
+	       m_tool_name.c_str(),
+	       monitoring_vars.logging_submissions.load(),
+	       monitoring_vars.logging_bytes.load(),
+	       monitoring_vars.monitoring_submissions.load(),
+	       monitoring_vars.monitoring_bytes.load(),
+	       monitoring_vars.jobs_completed.load());
 	
 	return true;
 }
@@ -217,9 +235,9 @@ void DatabaseWorkers::Thread(Thread_args* args){
 	}
 	
 	// grab read queries
-	locker = std::unique_lock<std::mutex>(m_args->m_data->read_msg_queue_mtx);
-	if(!m_args->m_data->read_msg_queue.empty()){
-		std::swap(m_args->m_data->read_msg_queue, job_data->read_queue);
+	locker = std::unique_lock<std::mutex>(m_args->m_data->read_query_queue_mtx);
+	if(!m_args->m_data->read_query_queue.empty()){
+		std::swap(m_args->m_data->read_query_queue, job_data->read_queue);
 		//printf("DbJobDistributor grabbed %d read query batches\n",job_data->read_queue.size());
 	}
 	
@@ -290,6 +308,52 @@ void DatabaseWorkers::DatabaseJobFail(void*& arg){
 	return;
 }
 
+void DatabaseWorkers::CacheConfigs(const char* alertname, const char* payload){
+	
+	Store tmp;
+	tmp.JsonParser(payload);
+	int base_config_id=0;
+	int runmode_config_id=0;
+	bool ok = tmp.Get("base_config_id",base_config_id);
+	ok = ok && tmp.Get("runmode_config_id",runmode_config_id);
+	if(!ok){
+		// FIXME cerr -> Log
+		std::cerr<<"Error parsing CacheConfigs alert: '"+std::string{payload}+"' does not contain 'Base' and 'RunMode' int keys"<<std::endl;
+		return;
+	}
+	
+	try {
+		pqxx::connection conn(DatabaseWorkers::connection_string);
+		if(!conn.is_open()){
+			std::cerr<<"CacheConfigs returned false after connection attempt"<<std::endl;
+			return;
+		}
+		pqxx::work tx(conn);
+		std::map<std::string, std::string> cached_configs;
+		
+		std::string query = "WITH base AS ( SELECT data FROM base_config WHERE config_id=$1), "
+		                    "  runmode AS ( SELECT data FROM runmode_config WHERE config_id=$2), "
+		                    "   merged AS ( SELECT base.data || runmode.data AS data FROM base CROSS JOIN runmode), "
+		                    " expanded AS ( SELECT key AS device, value AS version FROM merged CROSS JOIN jsonb_each(merged.data) ) "
+		                    "SELECT f.device, json_build_object('version', f.version, 'data', dc.data, 'base_config_id', $1, 'runmode_config_id', $2 ) "
+		                    "FROM flattened f JOIN device_config dc ON f.device=dc.device AND (f.version)::int=dc.version";
+		
+		for(auto [ device, json ] : tx.query<std::string_view, std::string_view>(query, pqxx::params(base_config_id, runmode_config_id))){
+			cached_configs[std::string{device}]=json;
+		}
+		std::swap(cached_configs, m_data->cached_configs);
+		
+	} catch (const pqxx::broken_connection &e){
+		// as usual the doxygen sucks, but it seems this doesn't provide
+		// any further methods to obtain information about the failure mode,
+		// so probably not useful to catch this explicitly.
+		std::cerr << e.what() << std::endl; // FIXME cerr -> Log
+		return;
+	}
+	//  connection closes on destruction
+	return;
+}
+
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
 
 bool DatabaseWorkers::DatabaseJob(void*& arg){
@@ -310,21 +374,23 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 		} else {
 			// set up prepared statements. These are, sadly, a property of the connection
 			// logging insert
-			conn->prepare("logging_insert", "INSERT INTO logging ( time, device, severity, message ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, severity int, message text)");
+			conn->prepare("logging_insert", "INSERT INTO logging ( time, device, severity, message ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, device text, severity int, message text)");
 			// monitoring insert
-			conn->prepare("monitoring_insert", "INSERT INTO monitoring ( time, device, subject, data ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, subject text, data jsonb)");
+			conn->prepare("monitoring_insert", "INSERT INTO monitoring ( time, device, subject, data ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, device text, subject text, data json)");
 			// alarms insert
-			conn->prepare("alarms_insert", "INSERT INTO alarms ( time, device, level, alarm ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, level int, alarm text)");
+			conn->prepare("alarms_insert", "INSERT INTO alarms ( time, device, critical, alarm ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, device text, critical boolean, alarm text)");
 			// rootplot insert
-			conn->prepare("rootplots_insert", "INSERT INTO rootplots ( time, name, data, draw_options, lifetime ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, data jsonb, draw_options text, lifetime int) returning version");
+			conn->prepare("rootplots_insert", "INSERT INTO rootplots ( time, name, data, draw_options, lifetime ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, name text, data json, draw_options text, lifetime int) returning version");
 			// plotlyplot insert
-			conn->prepare("plotlyplots_insert", "INSERT INTO plotlyplots ( time, name, data, layout, lifetime ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, data jsonb, layout jsonb, lifetime int) returning version");
+			conn->prepare("plotlyplots_insert", "INSERT INTO plotlyplots ( time, name, data, layout, lifetime ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, name text, data json, layout json, lifetime int) returning version");
 			// calibration insert
-			conn->prepare("calibration_insert", "INSERT INTO calibration ( time, name, description, data ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, description text, data jsonb) returning version");
+			conn->prepare("calibration_insert", "INSERT INTO calibration ( time, name, description, data ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, name text, description text, data json) returning version");
 			// device config insert
-			conn->prepare("device_config_insert", "INSERT INTO device_config ( time, device, author, description, data ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, device text, author text, description text, data jsonb) returning version");
+			conn->prepare("device_config_insert", "INSERT INTO device_config ( time, device, author, description, data ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, device text, author text, description text, data json) returning version");
 			// run config insert
-			conn->prepare("run_config_insert", "INSERT INTO run_config ( time, name, author, description, data ) SELECT * FROM jsonb_to_recordset( $1::jsonb ) as t(time timestamptz, name text, author text, description text, data jsonb) returning config_id");
+			conn->prepare("base_config_insert", "INSERT INTO base_config ( time, name, author, description, data ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, name text, author text, description text, data json) returning config_id");
+			// run mode config insert
+			conn->prepare("runmode_config_insert", "INSERT INTO runmode_config ( time, name, author, description, data ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, name text, author text, description text, data json) returning config_id");
 		}
 	}
 	
@@ -342,8 +408,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 	// for giggles, we'll pipeline them. This may even improve performance.
 	
 	// we handle batches serially, rather than inserting all batches at once before pulling everything
-	// XXX we could consider the latter, if it improved performance - the only drawback is we need to
-	// re-sumbit all remaining queries each time one errors, which is more overhead the more we submit.
+	// XXX we could consider the latter, if it improved performance - the only drawback is complexity
 	pqxx::pipeline* px = new pqxx::pipeline(*tx);
 	//printf("processing %d read query batches\n",m_args->read_queue.size());
 	for(QueryBatch* batch : m_args->read_queue){
@@ -364,12 +429,23 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 			
 			// push the queries to the DB
 			for(size_t i=m_args->last_i; i<batch->queries.size(); ++i){
-				m_args->ids.push_back(px->insert(batch->queries[i].msg()));
+				
+				// couple of catches:
+				// 1. queries with topic R_KACHEDCONFIG are cached and don't actually need to go to the DB
+				// 2. queries that failed decompression should be skipped
+				if( (!batch->queries[i].err.empty()) || (query_topic{batch->queries[i].topic()[2]}==query_topic::cached_config)){
+					 m_args->ids.push_back(0);
+				} else {
+					m_args->ids.push_back(px->insert(batch->queries[i].msg()));
+				}
 			}
 			
 			// pull the results
 			for(size_t i=0; i<m_args->ids.size(); ++i){
 				ZmqQuery& query = batch->queries[i+m_args->last_i];
+				
+				if( (!batch->queries[i].err.empty()) || (query_topic{batch->queries[i].topic()[2]}==query_topic::cached_config)) continue;
+				
 				try {
 					// XXX retrieving a given id blocks until that result is available
 					// perhaps we could check is_finished(id) and if not, pull other results while we wait
@@ -455,6 +531,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 			size_t last_j = (m_args->endpoint==DatabaseJobStep::generics) ? m_args->endpoint_j : batch->generic_query_indices.size();
 			for(size_t j=m_args->checkpoint_j; j<last_j; ++j){
 				ZmqQuery& query = batch->queries[batch->generic_query_indices[j]];
+				//printf("next user query: %.*s\n",query.msg().size(),query.msg().data());
 				if(!query.err.empty()) continue; // skip queries flagged bad on a previous iteration
 				try {
 					query.result = tx->exec(query.msg());
@@ -493,6 +570,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 			try {
 				tx->exec(pqxx::prepped{"logging_insert"}, pqxx::params{*batch});
 				++(m_args->monitoring_vars->logging_submissions);
+				m_args->monitoring_vars->logging_bytes += batch->length();
 			} catch (std::exception& e){
 				std::cerr<<"dbworker log insert failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
 				++(m_args->monitoring_vars->logging_submissions_failed);
@@ -522,9 +600,11 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 			try {
 				tx->exec(pqxx::prepped{"monitoring_insert"}, pqxx::params{*batch});
 				++(m_args->monitoring_vars->monitoring_submissions);
+				m_args->monitoring_vars->monitoring_bytes += batch->length();
 			} catch (std::exception& e){
 				++(m_args->monitoring_vars->monitoring_submissions_failed);
 				std::cerr<<"dbworker mon insert failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
+				std::cerr<<"batch: '"<<*batch<<"'"<<std::endl;
 				// FIXME log the error here
 				m_args->bad_mons.emplace(i);
 				m_args->checkpoint_i = i;
@@ -646,19 +726,40 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				}
 			}
 			
-			// run config insertions
-			if(batch->got_runconfigs() && batch->runconfig_batch_err.empty()){
-				//printf("calling prepped for run_config buffer '%s'\n",batch->runconfig_buffer.c_str());
+			// base config insertions
+			if(batch->got_base_configs() && batch->base_config_batch_err.empty()){
+				//printf("calling prepped for base_config buffer '%s'\n",batch->base_config_buffer.c_str());
 				try {
-					tx->for_query(pqxx::prepped{"run_config_insert"},
+					tx->for_query(pqxx::prepped{"base_config_insert"},
 						[&batch](uint16_t new_version_num){
-							batch->runconfig_version_nums.push_back(new_version_num);
-						}, pqxx::params{batch->runconfig_buffer});
-					++(m_args->monitoring_vars->runconfig_submissions);
+							batch->base_config_version_nums.push_back(new_version_num);
+						}, pqxx::params{batch->base_config_buffer});
+					++(m_args->monitoring_vars->base_config_submissions);
 				} catch (std::exception& e){
-					++(m_args->monitoring_vars->runconfig_submissions_failed);
-					batch->runconfig_batch_err = current_exception_name()+": "+e.what();
-					std::cerr<<"dbworker runconfig insert '"<<batch->runconfig_buffer<<"' failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
+					++(m_args->monitoring_vars->base_config_submissions_failed);
+					batch->base_config_batch_err = current_exception_name()+": "+e.what();
+					std::cerr<<"dbworker base_config insert '"<<batch->base_config_buffer<<"' failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
+					// FIXME log the error here
+					m_args->checkpoint_i = i+1;
+					m_args->had_error=true;
+					delete tx;
+					tx = new pqxx::work(*conn.get());
+				}
+			}
+			
+			// runmode config insertions
+			if(batch->got_runmode_configs() && batch->runmode_config_batch_err.empty()){
+				//printf("calling prepped for runmode_config buffer '%s'\n",batch->runmode_config_buffer.c_str());
+				try {
+					tx->for_query(pqxx::prepped{"runmode_config_insert"},
+						[&batch](uint16_t new_version_num){
+							batch->runmode_config_version_nums.push_back(new_version_num);
+						}, pqxx::params{batch->runmode_config_buffer});
+					++(m_args->monitoring_vars->runmode_config_submissions);
+				} catch (std::exception& e){
+					++(m_args->monitoring_vars->runmode_config_submissions_failed);
+					batch->runmode_config_batch_err = current_exception_name()+": "+e.what();
+					std::cerr<<"dbworker runmode_config insert '"<<batch->runmode_config_buffer<<"' failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
 					// FIXME log the error here
 					m_args->checkpoint_i = i+1;
 					m_args->had_error=true;

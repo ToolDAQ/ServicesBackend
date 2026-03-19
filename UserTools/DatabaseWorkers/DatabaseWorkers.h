@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <set>
+#include <chrono>
 
 #include "Tool.h"
 #include "DataModel.h"
@@ -93,6 +94,7 @@ class DatabaseWorkers: public Tool {
 	
 	private:
 	static void Thread(Thread_args* args);
+	void CacheConfigs(const char* alertname, const char* payload); ///< cache configs for upcoming config change
 	DatabaseJobDistributor_args thread_args;
 	DatabaseWorkerMonitoring monitoring_vars;
 	
@@ -104,6 +106,8 @@ class DatabaseWorkers: public Tool {
 	
 	static bool DatabaseJob(void*& arg);
 	static void DatabaseJobFail(void*& args);
+	
+	std::chrono::time_point<std::chrono::steady_clock> last_exec;
 	
 };
 

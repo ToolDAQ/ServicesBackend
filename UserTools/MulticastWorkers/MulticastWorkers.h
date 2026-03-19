@@ -2,6 +2,7 @@
 #define MulticastWorkers_H
 
 #include <iostream>
+#include <zstd.h>
 
 #include "Tool.h"
 #include "DataModel.h"
@@ -10,7 +11,7 @@
 /**
 * \class MulticastWorkers
 *
-* This Tool uses a worker pool to process batches of multicast messages (received in JSON format), separates them based on their topic (i.e. destination table) and prepares them for insertion into the database by database workers. This preparation may include batching messages, decoding the JSON into SQL, extraction of JSON variables into parameter packs, etc. Presently, it batches the JSON for use with postgres jsonb_to_recordset.
+* This Tool uses a worker pool to process batches of multicast messages (received in JSON format), separates them based on their topic (i.e. destination table) and prepares them for insertion into the database by database workers. This preparation may include batching messages, decoding the JSON into SQL, extraction of JSON variables into parameter packs, etc. Presently, it batches the JSON for use with postgres json_to_recordset.
 *
 * $Author: M. O'Flaherty $
 * $Date: 2025/12/04 $
@@ -31,6 +32,11 @@ struct MulticastJobStruct {
 	std::string* rootplot_buffer;
 	std::string* plotlyplot_buffer;
 	std::string* out_buffer;
+	int n_log_msgs;
+	int n_mon_msgs;
+	size_t decompressed_bytes;
+	std::string decompress_buffer;
+	std::string_view the_msg;
 	
 };
 
@@ -58,6 +64,7 @@ class MulticastWorkers: public Tool {
 	
 	static bool MulticastMessageJob(void*& arg); ///< job function that prepares a batch of multicast messages for DB entry
 	static void MulticastMessageFail(void*& arg); ///< job fail function, perform cleanup to return multicast buffer and job args struct to their respective Pools
+	std::chrono::time_point<std::chrono::steady_clock> last_exec;
 	
 	// for now use shared ones in datamodel
 	//WorkerPoolManager* job_manager=nullptr; ///< manager for worker farm, has internal background thread that spawns new jobs and or prunes them, along with tracking statistics

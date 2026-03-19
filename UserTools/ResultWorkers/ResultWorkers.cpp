@@ -150,8 +150,23 @@ bool ResultWorkers::ResultJob(void*& arg){
 			
 			for(ZmqQuery& query : m_args->batch->queries){
 				
+				// one topic is not yet set - retreivals from config cache
+				// handle those now
+				if(query_topic{query.topic()[2]}==query_topic::cached_config){
+					std::string query_string{query.msg()}; // can't use string_view as a key to a map lookup :T
+					if(m_args->m_data->cached_configs.count(query_string)){
+						query.setsuccess(1);
+						query.setresponserows(1);
+						query.setresponse(0, m_args->m_data->cached_configs[query_string]);
+					} else {
+						query.setsuccess(0);
+						query.setresponserows(1);
+						query.setresponse(0,"no cached configuration for this device!");
+					}
+				}
+				
 				// set whether the query succeeded or threw an exception
-				if(!query.err.empty()){
+				else if(!query.err.empty()){
 					query.setsuccess(0);
 					query.setresponserows(1);
 					query.setresponse(0, query.err);
@@ -193,12 +208,14 @@ bool ResultWorkers::ResultJob(void*& arg){
 			// process batch of write queries
 			// these are interleaved but results are grouped by type
 			size_t devconfig_i = 0;
-			size_t runconfig_i = 0;
+			size_t base_config_i = 0;
+			size_t runmode_config_i = 0;
 			size_t calibration_i = 0;
 			size_t plotlyplot_i = 0;
 			size_t rootplot_i = 0;
 			bool devconfigs_ok = !m_args->batch->devconfig_version_nums.empty();
-			bool runconfigs_ok = !m_args->batch->runconfig_version_nums.empty();
+			bool base_configs_ok = !m_args->batch->base_config_version_nums.empty();
+			bool runmode_configs_ok = !m_args->batch->runmode_config_version_nums.empty();
 			bool calibrations_ok = !m_args->batch->calibration_version_nums.empty();
 			bool plotlyplots_ok = !m_args->batch->plotlyplot_version_nums.empty();
 			bool rootplots_ok = !m_args->batch->rootplot_version_nums.empty();
@@ -223,13 +240,23 @@ bool ResultWorkers::ResultJob(void*& arg){
 						}
 						break;
 						
-					case query_topic::run_config:
-						query.setsuccess(runconfigs_ok);
+					case query_topic::base_config:
+						query.setsuccess(base_configs_ok);
 						query.setresponserows(1);
-						if(runconfigs_ok){
-							query.setresponse(0, m_args->batch->runconfig_version_nums[runconfig_i++]);
+						if(base_configs_ok){
+							query.setresponse(0, m_args->batch->base_config_version_nums[base_config_i++]);
 						} else {
-							query.setresponse(0, m_args->batch->runconfig_batch_err);
+							query.setresponse(0, m_args->batch->base_config_batch_err);
+						}
+						break;
+						
+					case query_topic::runmode_config:
+						query.setsuccess(runmode_configs_ok);
+						query.setresponserows(1);
+						if(runmode_configs_ok){
+							query.setresponse(0, m_args->batch->runmode_config_version_nums[runmode_config_i++]);
+						} else {
+							query.setresponse(0, m_args->batch->runmode_config_batch_err);
 						}
 						break;
 						
