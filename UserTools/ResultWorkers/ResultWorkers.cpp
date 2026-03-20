@@ -2,6 +2,10 @@
 
 ResultWorkers::ResultWorkers():Tool(){}
 
+// FIXME sufficient?
+const size_t COMPRESS_BUFFER_SIZE=633565;
+bool ResultWorkers::msg_compression=true;
+int ResultWorkers::compression_level=0;
 
 bool ResultWorkers::Initialise(std::string configfile, DataModel &data){
 	
@@ -11,6 +15,8 @@ bool ResultWorkers::Initialise(std::string configfile, DataModel &data){
 	//m_variables.Print();
 	
 	if(!m_variables.Get("verbose",m_verbose)) m_verbose=1;
+	if(!m_variables.Get("msg_compression",msg_compression)) msg_compression=true;
+	if(!m_variables.Get("compression_level",compression_level)) compression_level=1;
 	
 	ExportConfiguration();
 	
@@ -136,6 +142,10 @@ void ResultWorkers::ResultJobFail(void*& arg){
 bool ResultWorkers::ResultJob(void*& arg){
 	
 	ResultJobStruct* m_args = reinterpret_cast<ResultJobStruct*>(arg);
+	
+	thread_local ZSTD_CCtx* zstd_ctx = ZSTD_createCCtx();
+	thread_local char* compress_buf = new char[ZSTD_compressBound(COMPRESS_BUFFER_SIZE)];
+	
 	//m_args->batch->push_time("result_worker_start");
 	
 	// for now each job processes a batch, not a set of batches
@@ -157,11 +167,11 @@ bool ResultWorkers::ResultJob(void*& arg){
 					if(m_args->m_data->cached_configs.count(query_string)){
 						query.setsuccess(1);
 						query.setresponserows(1);
-						query.setresponse(0, m_args->m_data->cached_configs[query_string]);
+						query.setresponse(0, CompressMsg(zstd_ctx, compress_buf, m_args->m_data->cached_configs[query_string]));
 					} else {
 						query.setsuccess(0);
 						query.setresponserows(1);
-						query.setresponse(0,"no cached configuration for this device!");
+						query.setresponse(0, CompressMsg(zstd_ctx, compress_buf, "no cached configuration for this device!"));
 					}
 				}
 				
@@ -169,7 +179,7 @@ bool ResultWorkers::ResultJob(void*& arg){
 				else if(!query.err.empty()){
 					query.setsuccess(0);
 					query.setresponserows(1);
-					query.setresponse(0, query.err);
+					query.setresponse(0, CompressMsg(zstd_ctx, compress_buf, query.err));
 					
 				} else {
 					query.setsuccess(1);
@@ -186,12 +196,13 @@ bool ResultWorkers::ResultJob(void*& arg){
 						// to request results already packaged up into one JSON per row
 						// so all we need to do is copy that into the zmq message
 						for(size_t i=0; i<std::size(query.result); ++i){
-							query.setresponse(i, query.result[i][0].c_str());
+							query.setresponse(i, CompressMsg(zstd_ctx, compress_buf, query.result[i][0].c_str()));
 						}
 					} catch (std::exception& e){
 						std::cerr<<"caught "<<e.what()<<" trying to access query result!"<<std::endl;
 						query.setsuccess(0);
-						query.setresponserows(0);
+						query.setresponserows(1);
+						query.setresponse(0, CompressMsg(zstd_ctx, compress_buf, "error accessing query result"));
 						++(m_args->monitoring_vars->result_access_errors);
 					}
 					
@@ -234,9 +245,10 @@ bool ResultWorkers::ResultJob(void*& arg){
 						query.setsuccess(devconfigs_ok);
 						query.setresponserows(1);
 						if(devconfigs_ok){
+							// don't compress numerics
 							query.setresponse(0, m_args->batch->devconfig_version_nums[devconfig_i++]);
 						} else {
-							query.setresponse(0, m_args->batch->devconfig_batch_err);
+							query.setresponse(0, CompressMsg(zstd_ctx, compress_buf, m_args->batch->devconfig_batch_err));
 						}
 						break;
 						
@@ -246,7 +258,7 @@ bool ResultWorkers::ResultJob(void*& arg){
 						if(base_configs_ok){
 							query.setresponse(0, m_args->batch->base_config_version_nums[base_config_i++]);
 						} else {
-							query.setresponse(0, m_args->batch->base_config_batch_err);
+							query.setresponse(0, CompressMsg(zstd_ctx, compress_buf, m_args->batch->base_config_batch_err));
 						}
 						break;
 						
@@ -256,7 +268,7 @@ bool ResultWorkers::ResultJob(void*& arg){
 						if(runmode_configs_ok){
 							query.setresponse(0, m_args->batch->runmode_config_version_nums[runmode_config_i++]);
 						} else {
-							query.setresponse(0, m_args->batch->runmode_config_batch_err);
+							query.setresponse(0, CompressMsg(zstd_ctx, compress_buf, m_args->batch->runmode_config_batch_err));
 						}
 						break;
 						
@@ -266,7 +278,7 @@ bool ResultWorkers::ResultJob(void*& arg){
 						if(calibrations_ok){
 							query.setresponse(0, m_args->batch->calibration_version_nums[calibration_i++]);
 						} else {
-							query.setresponse(0, m_args->batch->calibration_batch_err);
+							query.setresponse(0, CompressMsg(zstd_ctx, compress_buf, m_args->batch->calibration_batch_err));
 						}
 						break;
 						
@@ -276,7 +288,7 @@ bool ResultWorkers::ResultJob(void*& arg){
 						if(plotlyplots_ok){
 							query.setresponse(0, m_args->batch->plotlyplot_version_nums[plotlyplot_i++]);
 						} else {
-							query.setresponse(0, m_args->batch->plotlyplot_batch_err);
+							query.setresponse(0, CompressMsg(zstd_ctx, compress_buf, m_args->batch->plotlyplot_batch_err));
 						}
 						break;
 						
@@ -286,7 +298,7 @@ bool ResultWorkers::ResultJob(void*& arg){
 						if(rootplots_ok){
 							query.setresponse(0, m_args->batch->rootplot_version_nums[rootplot_i++]);
 						} else {
-							query.setresponse(0, m_args->batch->rootplot_batch_err);
+							query.setresponse(0, CompressMsg(zstd_ctx, compress_buf, m_args->batch->rootplot_batch_err));
 						}
 						break;
 						
@@ -295,16 +307,13 @@ bool ResultWorkers::ResultJob(void*& arg){
 						if(!query.err.empty()){
 							query.setsuccess(0);
 							query.setresponserows(1);
-							query.setresponse(0, query.err);
+							query.setresponse(0, CompressMsg(zstd_ctx, compress_buf, query.err));
 							
 						} else {
 							query.setsuccess(1);
 							
 							try {
-								// TODO if we can safely shoehorn in a wrapping call to `row_to_json`
-								// around a user's generic sql, we can combine this with the above.
-								// But, given the arbitrary complexity of statements, this may not be possible.
-								// in which case, we need to loop over rows and convert them to JSON manually
+								// we need to loop over rows and convert them to JSON manually
 								query.setresponserows(std::size(query.result));
 								for(size_t i=0; i<std::size(query.result); ++i){
 									
@@ -325,15 +334,15 @@ bool ResultWorkers::ResultJob(void*& arg){
 									}
 									m_args->tmpval += "}";
 									
-									query.setresponse(i, m_args->tmpval);
+									query.setresponse(i, CompressMsg(zstd_ctx, compress_buf, m_args->tmpval));
 								}
 								
 							} catch (std::exception& e){
 								std::cerr<<"caught "<<current_exception_name()<<": "<<e.what()
-								         <<" trying to access query result!"<<std::endl;
+									 <<" trying to access query result!"<<std::endl;
 								query.setsuccess(0);
 								query.setresponserows(1);
-								query.setresponse(0, current_exception_name()+": "+e.what());
+								query.setresponse(0, CompressMsg(zstd_ctx, compress_buf, "Error accessing query result"));
 								++(m_args->monitoring_vars->result_access_errors);
 							}
 						}
@@ -378,4 +387,16 @@ bool ResultWorkers::ResultJob(void*& arg){
 	return true;
 }
 
-
+std::string_view ResultWorkers::CompressMsg(ZSTD_CCtx* zstd_ctx, char* compress_buf, const std::string& msg){
+	if(zstd_ctx){
+		thread_local size_t compressed_bytes;
+		compressed_bytes = ZSTD_compressCCtx(zstd_ctx, compress_buf, COMPRESS_BUFFER_SIZE, msg.data(), msg.size(), compression_level);
+		if(ZSTD_isError(compressed_bytes)){
+			printf("zstd error: %s\n", ZSTD_getErrorName(compressed_bytes)); // FIXME change to Log
+			// we'll fall back to uncompressed
+		} else {
+			return std::string_view(compress_buf, compressed_bytes);
+		}
+	}
+	return std::string_view(msg);
+}

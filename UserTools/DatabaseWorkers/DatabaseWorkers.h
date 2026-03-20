@@ -94,7 +94,9 @@ class DatabaseWorkers: public Tool {
 	
 	private:
 	static void Thread(Thread_args* args);
-	void CacheConfigs(const char* alertname, const char* payload); ///< cache configs for upcoming config change
+	void CacheConfigs(const char* alertname, const char* payload); ///< alert to cache configs for upcoming config change
+	std::string CacheConfigs(const char* arg); ///< slowcontrol to cache configs for upcoming config change
+	std::string GetCachedConfigs(const char* arg=nullptr); ///< get cached config numbers
 	DatabaseJobDistributor_args thread_args;
 	DatabaseWorkerMonitoring monitoring_vars;
 	
@@ -108,6 +110,9 @@ class DatabaseWorkers: public Tool {
 	static void DatabaseJobFail(void*& args);
 	
 	std::chrono::time_point<std::chrono::steady_clock> last_exec;
+	
+	int m_base_config_id;
+	int m_runmode_config_id;
 	
 };
 

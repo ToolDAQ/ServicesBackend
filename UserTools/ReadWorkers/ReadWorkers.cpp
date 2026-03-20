@@ -164,7 +164,7 @@ bool ReadWorkers::ReadMessageJob(void*& arg){
 		
 		ZmqQuery& query = m_args->local_msg_queue->queries[i];
 		
-		if(query.msg_raw()[0]!='{'){
+		if(query.msg_raw().size() && query.msg_raw()[0]=='('){
 		        // compressed - decompress it
 		        m_args->decompressed_bytes = ZSTD_getFrameContentSize(query.msg_raw().data(), query.msg_raw().size());
 		        if(m_args->decompressed_bytes==ZSTD_CONTENTSIZE_UNKNOWN || m_args->decompressed_bytes==ZSTD_CONTENTSIZE_ERROR){

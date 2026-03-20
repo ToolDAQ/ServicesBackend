@@ -217,9 +217,7 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 		
 		//printf("next monitoring msg: '%s'\n",next_msg.c_str());
 		// message may be compressed or decompressed, as indicated by first bye
-		if(next_msg[0]=='{'){
-			m_args->the_msg = std::string_view(next_msg.c_str(),next_msg.size());
-		} else {
+		if(next_msg[0]=='('){
 			// compressed - decompress it
 			m_args->decompressed_bytes = ZSTD_getFrameContentSize(next_msg.data(), next_msg.size());
 			if(m_args->decompressed_bytes==ZSTD_CONTENTSIZE_UNKNOWN || m_args->decompressed_bytes==ZSTD_CONTENTSIZE_ERROR){
@@ -240,6 +238,8 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 				continue;
 			}
 			m_args->the_msg = std::string_view(m_args->decompress_buffer.c_str(),m_args->decompressed_bytes);
+		} else {
+			m_args->the_msg = std::string_view(next_msg.c_str(),next_msg.size());
 		}
 		
 		// we can't batch insertions destined for different tables,

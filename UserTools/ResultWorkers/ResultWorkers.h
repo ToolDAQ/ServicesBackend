@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <sstream>
+#include <zstd.h>
 
 #include "Tool.h"
 #include "DataModel.h"
@@ -56,6 +57,9 @@ class ResultWorkers: public Tool {
 	
 	static bool ResultJob(void*& arg);
 	static void ResultJobFail(void*& args);
+	static std::string_view CompressMsg(ZSTD_CCtx* zstd_ctx, char* compress_buf, const std::string& msg);
+	static int compression_level;
+	static bool msg_compression;
 	
 };
 

@@ -166,9 +166,7 @@ bool WriteWorkers::WriteMessageJob(void*& arg){
 		
 		ZmqQuery& query = m_args->local_msg_queue->queries[i];
 		
-		if(query.msg_raw()[0]=='{'){
-			m_args->the_msg = query.msg_raw();
-		} else {
+		if(query.msg_raw().size() && query.msg_raw()[0]=='('){
 			// compressed - decompress it
 			m_args->decompressed_bytes = ZSTD_getFrameContentSize(query.parts[3].data(), query.parts[3].size());
 			if(m_args->decompressed_bytes==ZSTD_CONTENTSIZE_UNKNOWN || m_args->decompressed_bytes==ZSTD_CONTENTSIZE_ERROR){
@@ -194,6 +192,8 @@ bool WriteWorkers::WriteMessageJob(void*& arg){
 				continue;
 			}
 			m_args->the_msg = std::string_view(query.decompress_buffer.data(),m_args->decompressed_bytes);
+		} else {
+			m_args->the_msg = query.msg_raw();
 		}
 		// XXX 
 		//printf("WriteWorker processing %.*s query '%.*s'\n",query.topic().size(),query.topic().data(),m_args->the_msg.size(), m_args->the_msg.data());
