@@ -105,7 +105,9 @@ bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 	}
 	
 	// set a callback to cache configurations for upcoming run
-	m_data->sc_vars.AlertSubscribe("CacheConfig", std::bind(&DatabaseWorkers::CacheConfigs, this, std::placeholders::_1, std::placeholders::_1));
+	m_data->sc_vars.AlertSubscribe("CacheConfig", [this](const char* alert, const char* payload) -> void { CacheConfigs(alert, payload); });
+	m_data->sc_vars.Add("CacheConfig", SlowControlElementType(COMMAND),[this](const char* control) -> std::string { return CacheConfigs(control); },
+	                    std::bind(&DatabaseWorkers::GetCachedConfigs, this, std::placeholders::_1),false,false); // lockable, hidden
 	
 	last_exec = std::chrono::steady_clock::now();
 	
@@ -308,25 +310,45 @@ void DatabaseWorkers::DatabaseJobFail(void*& arg){
 	return;
 }
 
+std::string DatabaseWorkers::GetCachedConfigs(const char* arg){
+	if(arg) std::cout<<"GetCacheConfigs call with argument "<<arg<<std::endl;
+	return ("{"+std::to_string(m_base_config_id)+","+std::to_string(m_runmode_config_id)+"}");
+}
+
 void DatabaseWorkers::CacheConfigs(const char* alertname, const char* payload){
+	std::cout<<"CacheConfigs alert with alert '"<<alertname<<"' and payload '"<<payload<<"'"<<std::endl;
+	if(m_data->sc_vars[alertname]){
+		m_data->sc_vars[alertname]->SetValue(payload);
+		CacheConfigs(alertname);
+	} else {
+		// shouldn't really ever happen. This function is only triggered by alerts of the correct name...
+		std::cerr<<"CacheConfigs alert with unexpected alert name '"<<alertname<<"'"<<std::endl;
+	}
+	return;
+}
+
+std::string DatabaseWorkers::CacheConfigs(const char* arg){
+	
+	std::string payload = m_data->sc_vars.GetValue<std::string>(arg);
+	std::cout<<"CacheConfigs call with argument '"<<arg<<"', which now has value '"<<payload<<"'"<<std::endl;
 	
 	Store tmp;
 	tmp.JsonParser(payload);
-	int base_config_id=0;
-	int runmode_config_id=0;
-	bool ok = tmp.Get("base_config_id",base_config_id);
-	ok = ok && tmp.Get("runmode_config_id",runmode_config_id);
+	bool ok = tmp.Get("base_config_id",m_base_config_id);
+	ok = ok && tmp.Get("runmode_config_id",m_runmode_config_id);
 	if(!ok){
 		// FIXME cerr -> Log
-		std::cerr<<"Error parsing CacheConfigs alert: '"+std::string{payload}+"' does not contain 'Base' and 'RunMode' int keys"<<std::endl;
-		return;
+		std::string err = "Error parsing CacheConfigs alert: '"+std::string{payload}+"' does not contain 'base_config_id' and 'runmode_config_id' int keys";
+		std::cerr<<err<<std::endl;
+		return err;
 	}
 	
 	try {
 		pqxx::connection conn(DatabaseWorkers::connection_string);
 		if(!conn.is_open()){
-			std::cerr<<"CacheConfigs returned false after connection attempt"<<std::endl;
-			return;
+			std::string err = "CacheConfigs returned false after connection attempt";
+			std::cerr<<err<<std::endl;
+			return err;
 		}
 		pqxx::work tx(conn);
 		std::map<std::string, std::string> cached_configs;
@@ -338,7 +360,7 @@ void DatabaseWorkers::CacheConfigs(const char* alertname, const char* payload){
 		                    "SELECT f.device, json_build_object('version', f.version, 'data', dc.data, 'base_config_id', $1, 'runmode_config_id', $2 ) "
 		                    "FROM flattened f JOIN device_config dc ON f.device=dc.device AND (f.version)::int=dc.version";
 		
-		for(auto [ device, json ] : tx.query<std::string_view, std::string_view>(query, pqxx::params(base_config_id, runmode_config_id))){
+		for(auto [ device, json ] : tx.query<std::string_view, std::string_view>(query, pqxx::params(m_base_config_id, m_runmode_config_id))){
 			cached_configs[std::string{device}]=json;
 		}
 		std::swap(cached_configs, m_data->cached_configs);
@@ -348,10 +370,11 @@ void DatabaseWorkers::CacheConfigs(const char* alertname, const char* payload){
 		// any further methods to obtain information about the failure mode,
 		// so probably not useful to catch this explicitly.
 		std::cerr << e.what() << std::endl; // FIXME cerr -> Log
-		return;
+		return e.what();
 	}
 	//  connection closes on destruction
-	return;
+	
+	return GetCachedConfigs();
 }
 
 // ««-------------- ≪ °◇◆◇° ≫ --------------»»
