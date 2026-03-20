@@ -339,7 +339,7 @@ bool ResultWorkers::ResultJob(void*& arg){
 								
 							} catch (std::exception& e){
 								std::cerr<<"caught "<<current_exception_name()<<": "<<e.what()
-									 <<" trying to access query result!"<<std::endl;
+								         <<" trying to access query result!"<<std::endl;
 								query.setsuccess(0);
 								query.setresponserows(1);
 								query.setresponse(0, CompressMsg(zstd_ctx, compress_buf, "Error accessing query result"));
