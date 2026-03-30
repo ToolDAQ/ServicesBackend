@@ -49,7 +49,7 @@ fi
 while [ true ]; do
 	echo -n "starting middleman at " >> middleman_runs.log
 	date >> middleman_runs.log
-	./main middleman
+	./main ./configfiles/middleman/ToolChainConfig
 	echo -n "middleman exited with code $? at " >> middleman_runs.log
 	date >> middleman_runs.log
 	sleep 1
