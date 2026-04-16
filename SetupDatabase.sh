@@ -27,8 +27,8 @@ if [ -f /.DBSetupDone ]; then
 	# systemd version for baremetal
 	if [ ${USE_SYSTEMD} -eq 0 ]; then
 		# note no [ ] in following check
-		if ! systemctl is-active --quiet postgresql; then
-			sudo systemctl start postgresql
+		if ! systemctl is-active --quiet postgresql-18; then
+			sudo systemctl start postgresql-18
 		fi
 	else
 		# pg_ctl version for containers
@@ -87,14 +87,14 @@ if [ ${USE_SYSTEMD} -eq 0 ]; then
 	# if not using the default install location, we need to modify the systemctl file
 	if [ ${DEFAULT_LOCATION} -ne 1 ]; then
 		#systemctl edit --stdin postgresql <<-EOF        # requires systemd v256
-		SYSTEMD_EDITOR=tee systemctl edit postgresql <<-EOF
+		SYSTEMD_EDITOR=tee systemctl edit postgresql-18 <<-EOF
 		[Service]
 		Environment=PGDATA=${PGDATA}
 		EOF
 	fi
 	
 	# systemd version
-	sudo systemctl enable --now postgresql
+	sudo systemctl enable --now postgresql-18
 else
 	# container version
 	sudo mkdir -p /var/run/postgresql && sudo chown -R postgres /var/run/postgresql
@@ -156,7 +156,7 @@ psql -ddaq -c 'CREATE OR REPLACE FUNCTION "fn_runmode_config_ver"() returns "pg_
 psql -ddaq -c 'CREATE TRIGGER trig_runmode_config_ver BEFORE insert ON runmode_config FOR EACH ROW EXECUTE PROCEDURE fn_runmode_config_ver();'
 
 echo "creating run_info table"
-psql -ddaq -c "CREATE TABLE run_info (run_number serial PRIMARY KEY, start_time timestamp with time zone NOT NULL, stop_time timestamp with time zone, base_config_id int NOT NULL references base_config(config_id), runmode_config_id int NOT NULL references runmode_config(config_id), testing boolean NOT NULL, comments text NOT NULL);"
+psql -ddaq -c "CREATE TABLE run_info (run_number serial PRIMARY KEY, start_time timestamp with time zone NOT NULL, stop_time timestamp with time zone, base_config_id int NOT NULL references base_config(config_id), runmode_config_id int NOT NULL references runmode_config(config_id), testing boolean NOT NULL, comments text NOT NULL, bad_devices json NOT NULL DEFAULT '{}');"
 
 echo "creating devices table"
 # more fields: created on, by? retired by, retirement cause? device description?
@@ -179,7 +179,7 @@ psql -ddaq -c 'CREATE OR REPLACE FUNCTION "fn_devconfig_ver"() returns "pg_catal
 psql -ddaq -c 'CREATE TRIGGER trig_devconfig_ver BEFORE insert ON device_config FOR EACH ROW EXECUTE PROCEDURE fn_devconfig_ver();'
 
 echo "creating calibration table"
-# change data to bytea? add created by?
+# FIXME change data to bytea? add created by?
 psql -ddaq -c "CREATE TABLE calibration (time timestamp with time zone NOT NULL DEFAULT now(), name text NOT NULL, version int NOT NULL, description text NOT NULL, data json NOT NULL);"
 
 echo "creating index on calibration table"
@@ -248,6 +248,10 @@ psql -ddaq -c "ALTER TABLE alarms_template ADD PRIMARY KEY(uid);"
 echo "creating alarms partition parent and child tables"
 psql -ddaq -c "SELECT partman.create_parent( p_parent_table:= 'public.alarms', p_control := 'first_time', p_interval := '1 day', p_template_table:='public.alarms_template');"
 
+echo "creating insert_alarm function"
+psql -ddaq -c 'CREATE OR REPLACE FUNCTION "alarm_upsert"() RETURNS TRIGGER AS $BODY$ BEGIN UPDATE alarms SET event_counter=event_counter+1, last_time=NEW.first_time WHERE resolve_time IS NULL AND device=NEW.device AND description=NEW.description; IF FOUND THEN RETURN NULL; END IF; RETURN NEW; END; $BODY$ LANGUAGE plpgsql;'
+psql -ddaq -c "CREATE TRIGGER trig_alarm_upsert BEFORE INSERT ON alarms FOR EACH ROW EXECUTE FUNCTION alarm_upsert();"
+
 echo "creating global_alerts table"
 # do we really want bytea or just JSON?
 psql -ddaq -c "create table global_alerts ( time TIMESTAMP WITH TIME ZONE NOT NULL, name TEXT NOT NULL, payload bytea ) PARTITION BY RANGE (time);"
@@ -304,9 +308,9 @@ psql -ddaq -c "CREATE TABLE command_log_template(LIKE command_log);"
 echo "creating command_log partition parent and child tables"
 psql -ddaq -c "SELECT partman.create_parent( p_parent_table:= 'public.command_log', p_control := 'time', p_interval := '1 day', p_template_table:='public.command_log_template');"
 
-echo "creating pmt table"
-psql -ddaq -c "CREATE type pmt_location as enum ('bottom', 'barrel', 'top');"
-psql -ddaq -c "CREATE TABLE pmt (id int PRIMARY KEY, x real NOT NULL, y real NOT NULL, z real, type text NOT NULL, size real NOT NULL, location pmt_location NOT NULL);"
+echo "creating locations table"
+psql -ddaq -c "CREATE type tank_location as enum ('bottom', 'barrel', 'top');"
+psql -ddaq -c "CREATE TABLE locations (id int PRIMARY KEY, x real NOT NULL, y real NOT NULL, z real, type text NOT NULL, size real NOT NULL, location tank_location NOT NULL);"
 
 echo "creating shift_check table"
 psql -ddaq -c "CREATE TABLE shift_check ( time timestamp with time zone NOT NULL DEFAULT now(), user_id integer references users(user_id), data jsonb NOT NULL) PARTITION BY RANGE (time);"

@@ -13,6 +13,11 @@ struct ManagedSocket {
 /*	std::string remote_port;*/
 	std::string remote_port_name;
 	std::map<std::string,ToolFramework::Store*> connections;
+	~ManagedSocket(){
+		for(auto&& aconn : connections){
+			delete aconn.second;
+		}
+	}
 };
 
 #endif

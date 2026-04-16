@@ -105,7 +105,7 @@ bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 	}
 	
 	// set a callback to cache configurations for upcoming run
-	m_data->sc_vars.AlertSubscribe("CacheConfig", [this](const char* alert, const char* payload) -> void { CacheConfigs(alert, payload); });
+	m_data->sc_vars.AlertSubscribe("CacheConfig", [this](const char* alert, const char* payload) -> bool { return CacheConfigs(alert, payload); });
 	m_data->sc_vars.Add("CacheConfig", SlowControlElementType(COMMAND),[this](const char* control) -> std::string { return CacheConfigs(control); },
 	                    std::bind(&DatabaseWorkers::GetCachedConfigs, this, std::placeholders::_1),false,false); // lockable, hidden
 	
@@ -315,7 +315,7 @@ std::string DatabaseWorkers::GetCachedConfigs(const char* arg){
 	return ("{"+std::to_string(m_base_config_id)+","+std::to_string(m_runmode_config_id)+"}");
 }
 
-void DatabaseWorkers::CacheConfigs(const char* alertname, const char* payload){
+bool DatabaseWorkers::CacheConfigs(const char* alertname, const char* payload){
 	std::cout<<"CacheConfigs alert with alert '"<<alertname<<"' and payload '"<<payload<<"'"<<std::endl;
 	if(m_data->sc_vars[alertname]){
 		m_data->sc_vars[alertname]->SetValue(payload);
@@ -324,7 +324,7 @@ void DatabaseWorkers::CacheConfigs(const char* alertname, const char* payload){
 		// shouldn't really ever happen. This function is only triggered by alerts of the correct name...
 		std::cerr<<"CacheConfigs alert with unexpected alert name '"<<alertname<<"'"<<std::endl;
 	}
-	return;
+	return true;
 }
 
 std::string DatabaseWorkers::CacheConfigs(const char* arg){
@@ -401,6 +401,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 			// monitoring insert
 			conn->prepare("monitoring_insert", "INSERT INTO monitoring ( time, device, subject, data ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, device text, subject text, data json)");
 			// alarms insert
+			// N.B. a trigger is attached to inserts that will instead update an existing alarm if an unresolved one with the same name and message exists
 			conn->prepare("alarms_insert", "INSERT INTO alarms ( time, device, critical, alarm ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, device text, critical boolean, alarm text)");
 			// rootplot insert
 			conn->prepare("rootplots_insert", "INSERT INTO rootplots ( time, name, data, draw_options, lifetime ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, name text, data json, draw_options text, lifetime int) returning version");

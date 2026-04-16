@@ -94,7 +94,7 @@ class DatabaseWorkers: public Tool {
 	
 	private:
 	static void Thread(Thread_args* args);
-	void CacheConfigs(const char* alertname, const char* payload); ///< alert to cache configs for upcoming config change
+	bool CacheConfigs(const char* alertname, const char* payload); ///< alert to cache configs for upcoming config change
 	std::string CacheConfigs(const char* arg); ///< slowcontrol to cache configs for upcoming config change
 	std::string GetCachedConfigs(const char* arg=nullptr); ///< get cached config numbers
 	DatabaseJobDistributor_args thread_args;
