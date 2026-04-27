@@ -301,8 +301,7 @@ psql -ddaq -c "CREATE INDEX ON event_display (readout_number);"
 psql -ddaq -c "CREATE INDEX ON event_display (type) WITH (deduplicate_items = on);"
 
 echo "creating command_log table"
-#psql -ddaq -c "CREATE TABLE command_log (time timestamp with time zone NOT NULL DEFAULT now(), user_id integer references users(user_id), command json NOT NULL) PARTITION BY RANGE (time);"
-psql -ddaq -c "CREATE TABLE command_log (time timestamp with time zone NOT NULL DEFAULT now(), user text, command json NOT NULL) PARTITION BY RANGE (time);"
+psql -ddaq -c "CREATE TABLE command_log (time timestamp with time zone NOT NULL DEFAULT now(), user_id integer references users(user_id), command json NOT NULL) PARTITION BY RANGE (time);"
 
 # is this overkill with partitioning? maybe also change partitioning interval?
 echo "creating index on command_log times"
