@@ -32,7 +32,7 @@ service_kick_sec 60 		      # remove hosts with no heartbeat after given period
 
 ###### Backend Services #####   NEWLY ADDED NEEDS TO HAVE PROPER DESCRIPTIONS AND SOME PRUNING BEFORE RELEASE
 use_backend_services 0		#
-verbosity 1			#
+services_backend_verbosity 1	#
 max_retries 3			#
 resend_period_ms 1000		#
 print_stats_period_ms 1000	#
@@ -53,4 +53,5 @@ Tools_File configfiles/middleman/ToolsConfig    # list of tools to run and their
 Inline 0		# number of Execute steps in program, -1 infinite loop that is ended by user 
 Interactive 0 		# set to 1 if you want to run the code interactively
 Remote 1    		# set to 1 if you want to run the code remotely
-
+quitfile Quit           # make this file to stop the middleman and don't restart it
+stopfile Stop           # make this file to stop the toolchain

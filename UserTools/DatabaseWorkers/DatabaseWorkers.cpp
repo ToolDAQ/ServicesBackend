@@ -402,7 +402,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 			conn->prepare("monitoring_insert", "INSERT INTO monitoring ( time, device, subject, data ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, device text, subject text, data json)");
 			// alarms insert
 			// N.B. a trigger is attached to inserts that will instead update an existing alarm if an unresolved one with the same name and message exists
-			conn->prepare("alarms_insert", "INSERT INTO alarms ( time, device, critical, alarm ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, device text, critical boolean, alarm text)");
+			conn->prepare("alarms_insert", "INSERT INTO alarms ( first_time, device, critical, description ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, device text, critical boolean, description text)");
 			// rootplot insert
 			conn->prepare("rootplots_insert", "INSERT INTO rootplots ( time, name, data, draw_options, lifetime ) SELECT * FROM json_to_recordset( $1::json ) as t(time timestamptz, name text, data json, draw_options text, lifetime int) returning version");
 			// plotlyplot insert

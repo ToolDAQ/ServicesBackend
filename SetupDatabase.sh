@@ -20,6 +20,8 @@ export PGDATA=${PGROOT}/data
 # but after installing from postgres' repo, the install location is not in the default PATH...
 export PATH=/usr/pgsql-18/bin:$PATH
 export LD_LIBRARY_PATH=/usr/pgsql-18/lib:$LD_LIBRARY_PATH
+echo "PATH+=:/usr/pgsql-18/bin" >> SetupDB.sh
+echo "LD_LIBRARY_PATH+=:/usr/pgsql-18/lib" >> SetupDB.sh
 
 # only take action on first run
 if [ -f /.DBSetupDone ]; then
@@ -133,7 +135,8 @@ psql -ddaq -c "CREATE UNIQUE INDEX user_name_idx ON users(LOWER(username));"
 
 echo "creating base_config table"
 # add more fields: retired by, on, reason?
-psql -ddaq -c "CREATE TABLE base_config (config_id serial PRIMARY KEY, time timestamp with time zone NOT NULL DEFAULT now(), name text NOT NULL, version int NOT NULL, description text NOT NULL, author int NOT NULL references users(user_id), retired boolean NOT NULL DEFAULT FALSE, data jsonb NOT NULL);"
+#psql -ddaq -c "CREATE TABLE base_config (config_id serial PRIMARY KEY, time timestamp with time zone NOT NULL DEFAULT now(), name text NOT NULL, version int NOT NULL, description text NOT NULL, author int NOT NULL references users(user_id), retired boolean NOT NULL DEFAULT FALSE, data jsonb NOT NULL);"
+psql -ddaq -c "CREATE TABLE base_config (config_id serial PRIMARY KEY, time timestamp with time zone NOT NULL DEFAULT now(), name text NOT NULL, version int NOT NULL, description text NOT NULL, author text NOT NULL, retired boolean NOT NULL DEFAULT FALSE, data jsonb NOT NULL);"
 
  # n.b. this index is doing double duty of enforcing unique {device:version} constraint and providing an ordered index
  # a unique(name,version) constraint uses an index to accomplish this under the hood, by doing it explicitly we can make the index ordered
@@ -146,7 +149,8 @@ psql -ddaq -c 'CREATE TRIGGER trig_base_config_ver BEFORE insert ON base_config 
 
 echo "creating runmode_config table"
 # add more fields: retired by, on, reason?
-psql -ddaq -c "CREATE TABLE runmode_config (config_id serial PRIMARY KEY, time timestamp with time zone NOT NULL DEFAULT now(), name text NOT NULL, version int NOT NULL, description text NOT NULL, author int NOT NULL references users(user_id), retired boolean NOT NULL DEFAULT FALSE, data jsonb NOT NULL);"
+#psql -ddaq -c "CREATE TABLE runmode_config (config_id serial PRIMARY KEY, time timestamp with time zone NOT NULL DEFAULT now(), name text NOT NULL, version int NOT NULL, description text NOT NULL, author int NOT NULL references users(user_id), retired boolean NOT NULL DEFAULT FALSE, data jsonb NOT NULL);"
+psql -ddaq -c "CREATE TABLE runmode_config (config_id serial PRIMARY KEY, time timestamp with time zone NOT NULL DEFAULT now(), name text NOT NULL, version int NOT NULL, description text NOT NULL, author text NOT NULL, retired boolean NOT NULL DEFAULT FALSE, data jsonb NOT NULL);"
 
 echo "creating index on runmode_config table"
 psql -ddaq -c "CREATE UNIQUE INDEX ON runmode_config (name, version DESC NULLS LAST)"
@@ -169,7 +173,8 @@ psql -ddaq -c "CREATE UNIQUE INDEX dev_name_idx ON devices(LOWER(name));"
 
 echo "creating device_config table"
 # XXX IMPORTANT: VERSION 0 OF ALL DEVICE CONFIGURATIONS SHOULD BE DEVICE OFF
-psql -ddaq -c "CREATE TABLE device_config (id serial PRIMARY KEY, time timestamp with time zone NOT NULL DEFAULT now(), device text references devices(name), version int NOT NULL, author int NOT NULL references users(user_id), description text NOT NULL, data json NOT NULL);"
+#psql -ddaq -c "CREATE TABLE device_config (id serial PRIMARY KEY, time timestamp with time zone NOT NULL DEFAULT now(), device text references devices(name), version int NOT NULL, author int NOT NULL references users(user_id), description text NOT NULL, data json NOT NULL);"
+psql -ddaq -c "CREATE TABLE device_config (id serial PRIMARY KEY, time timestamp with time zone NOT NULL DEFAULT now(), device text references devices(name), version int NOT NULL, author text NOT NULL, description text NOT NULL, data json NOT NULL);"
 
 echo "creating index on device_config table"
 psql -ddaq -c "CREATE UNIQUE INDEX ON device_config (device, version DESC NULLS LAST)"
@@ -235,7 +240,7 @@ psql -ddaq -c "SELECT partman.create_parent( p_parent_table:= 'public.monitoring
 
 echo "creating alarms table"
 # FIXME ideally uid would be unique, but requires being part of partitioning column, so we apply to the template
-psql -ddaq -c "create table alarms ( uid SERIAL NOT NULL, status INTEGER DEFAULT 0, critical BOOLEAN NOT NULL, first_time TIMESTAMP WITH TIME ZONE NOT NULL, last_time TIMESTAMP WITH TIME ZONE NOT NULL, device TEXT NOT NULL, description TEXT NOT NULL, silence_user TEXT, resolve_user TEXT, expert_user TEXT, resolve_time TIMESTAMP WITH TIME ZONE, resolution_description TEXT, event_counter INTEGER default 1 ) PARTITION BY RANGE (first_time);"
+psql -ddaq -c "CREATE TABLE alarms ( uid SERIAL NOT NULL, status INTEGER DEFAULT 0, critical BOOLEAN NOT NULL, first_time TIMESTAMP WITH TIME ZONE NOT NULL, last_time TIMESTAMP WITH TIME ZONE NOT NULL, device TEXT NOT NULL, description TEXT NOT NULL, silence_user TEXT, resolve_user TEXT, expert_user TEXT, resolve_time TIMESTAMP WITH TIME ZONE, resolution_description TEXT, event_counter INTEGER default 1 ) PARTITION BY RANGE (first_time);"
 
 echo "creating indices on alarms table"
 psql -ddaq -c "CREATE INDEX ON alarms (device) WITH (deduplicate_items = on);"
@@ -249,12 +254,12 @@ echo "creating alarms partition parent and child tables"
 psql -ddaq -c "SELECT partman.create_parent( p_parent_table:= 'public.alarms', p_control := 'first_time', p_interval := '1 day', p_template_table:='public.alarms_template');"
 
 echo "creating insert_alarm function"
-psql -ddaq -c 'CREATE OR REPLACE FUNCTION "alarm_upsert"() RETURNS TRIGGER AS $BODY$ BEGIN UPDATE alarms SET event_counter=event_counter+1, last_time=NEW.first_time WHERE resolve_time IS NULL AND device=NEW.device AND description=NEW.description; IF FOUND THEN RETURN NULL; END IF; RETURN NEW; END; $BODY$ LANGUAGE plpgsql;'
+psql -ddaq -c 'CREATE OR REPLACE FUNCTION "alarm_upsert"() RETURNS TRIGGER AS $BODY$ BEGIN UPDATE alarms SET event_counter=event_counter+1, last_time=NEW.first_time WHERE resolve_time IS NULL AND device=NEW.device AND description=NEW.description; IF FOUND THEN RETURN NULL; END IF; NEW.last_time = NEW.first_time; RETURN NEW; END; $BODY$ LANGUAGE plpgsql;'
 psql -ddaq -c "CREATE TRIGGER trig_alarm_upsert BEFORE INSERT ON alarms FOR EACH ROW EXECUTE FUNCTION alarm_upsert();"
 
 echo "creating global_alerts table"
 # do we really want bytea or just JSON?
-psql -ddaq -c "create table global_alerts ( time TIMESTAMP WITH TIME ZONE NOT NULL, name TEXT NOT NULL, payload bytea ) PARTITION BY RANGE (time);"
+psql -ddaq -c "CREATE TABLE global_alerts ( time TIMESTAMP WITH TIME ZONE NOT NULL, name TEXT NOT NULL, payload bytea ) PARTITION BY RANGE (time);"
 
 echo "creating indices on global_alerts table"
 psql -ddaq -c "CREATE INDEX ON global_alerts (name) WITH (deduplicate_items = on);"
@@ -292,11 +297,12 @@ echo "creating index on event type"
 # is this overkill?
 psql -ddaq -c "CREATE INDEX ON event_display (readout_number);"
 # is this?
-#psql -ddaq -c "CREATE INDEX ON event_display (run_number) WITH (deduplicate_items = on);"  
+#psql -ddaq -c "CREATE INDEX ON event_display (run_number) WITH (deduplicate_items = on);"
 psql -ddaq -c "CREATE INDEX ON event_display (type) WITH (deduplicate_items = on);"
 
 echo "creating command_log table"
-psql -ddaq -c "CREATE TABLE command_log (time timestamp with time zone NOT NULL DEFAULT now(), user_id integer references users(user_id), command json NOT NULL) PARTITION BY RANGE (time);"
+#psql -ddaq -c "CREATE TABLE command_log (time timestamp with time zone NOT NULL DEFAULT now(), user_id integer references users(user_id), command json NOT NULL) PARTITION BY RANGE (time);"
+psql -ddaq -c "CREATE TABLE command_log (time timestamp with time zone NOT NULL DEFAULT now(), user text, command json NOT NULL) PARTITION BY RANGE (time);"
 
 # is this overkill with partitioning? maybe also change partitioning interval?
 echo "creating index on command_log times"
