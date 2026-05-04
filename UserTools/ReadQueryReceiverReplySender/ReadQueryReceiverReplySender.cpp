@@ -259,7 +259,8 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 				std::cerr<<m_args->m_tool_name<<": Unexpected "<<m_args->msg_parts<<" part message"<<std::endl;
 				for(int i=0; i<std::min(4,m_args->msg_parts); ++i){
 					char msg_str[msg_buf[part_order[i]].size()+1];
-					snprintf(&msg_str[0], msg_buf[part_order[i]].size()+1, "%s", msg_buf[part_order[i]].data());
+					msg_str[msg_buf[part_order[i]].size()]='\0';
+					if(msg_buf[part_order[i]].size()) snprintf(&msg_str[0], msg_buf[part_order[i]].size(), "%s", msg_buf[part_order[i]].data());
 					printf("\tpart %d: %s\n",i, msg_str);
 				}
 				// FIXME Log this? here? do we add a flag for bad and do it in the processing?

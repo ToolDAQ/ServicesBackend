@@ -217,7 +217,7 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 		
 		//printf("next monitoring msg: '%s'\n",next_msg.c_str());
 		// message may be compressed or decompressed, as indicated by first bye
-		if(next_msg[0]=='('){
+		if(ZmqQuery::compressed(next_msg)){
 			// compressed - decompress it
 			m_args->decompressed_bytes = ZSTD_getFrameContentSize(next_msg.data(), next_msg.size());
 			if(m_args->decompressed_bytes==ZSTD_CONTENTSIZE_UNKNOWN || m_args->decompressed_bytes==ZSTD_CONTENTSIZE_ERROR){

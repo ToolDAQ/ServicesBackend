@@ -51,8 +51,16 @@ struct ZmqQuery {
 	std::string_view topic(){
 		return std::string_view{(const char*)parts[2].data(),parts[2].size()};
 	}
+	bool compressed(){
+		return (parts[3].size()>4 && strncmp((char*)parts[3].data(),(char*)ZSTD_MAGIC_BYTES,4)==0);
+
+	}
+	static bool compressed(std::string_view msg){
+		return (msg.length()>4 && strncmp(msg.data(),(char*)ZSTD_MAGIC_BYTES,4)==0);
+
+	}
 	std::string_view msg(){
-		if(parts[3].size() && ((char*)parts[3].data())[0]=='(') return std::string_view{decompress_buffer};
+		if(compressed()) return std::string_view{decompress_buffer};
 		return std::string_view{(const char*)parts[3].data(),parts[3].size()};
 	}
 	std::string_view msg_raw(){
@@ -120,6 +128,7 @@ struct ZmqQuery {
 	}
 	// ---------
 	
+	static constexpr unsigned char ZSTD_MAGIC_BYTES[4] = {0x28,0xB5,0x2F,0xFD}; // ZSTD_MAGICNUMBER from zstd.h BUT REVERSED!
 };
 
 
