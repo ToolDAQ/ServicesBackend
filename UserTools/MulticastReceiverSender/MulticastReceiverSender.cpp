@@ -231,7 +231,7 @@ bool MulticastReceiverSender::Execute(){
 	monitoring_vars.Set("waiting_out_messages",thread_args.out_local_queue.size());
 	monitoring_vars.Set("receive_rate_MB/s",receive_rate_MBps);
 	monitoring_vars.Set("send_rate_MB/s",send_rate_MBps);
-	printf("%-20s\treceive rate: %.0f MB/s\treceived: %.0f MB\ttransers: %d\n",type_str.c_str(),receive_rate_MBps,double(bytes_in)/1E6,monitoring_vars.in_buffer_transfers.load());
+	//printf("%-20s\treceive rate: %.0f MB/s\treceived: %.0f MB\ttransers: %d\n",type_str.c_str(),receive_rate_MBps,double(bytes_in)/1E6,monitoring_vars.in_buffer_transfers.load());
 	
 	last_bytes_time = time_now;
 	last_bytes_in = bytes_in;
@@ -359,6 +359,7 @@ void MulticastReceiverSender::Thread(Thread_args* arg){
 			m_args->monitoring_vars->bytes_received += m_args->get_ok;
 			//m_data->Log("Received multicast message '"+std::string(m_args->message)
 			//            +"' from "+std::string{inet_ntoa(&m_args->addr->sin_addr)},12);
+			//printf("received multicast message %s from %s\n",m_args->message,inet_ntoa(m_args->addr.sin_addr));
 			
 			m_args->in_local_queue->emplace_back(std::string_view(m_args->message,m_args->get_ok));
 			

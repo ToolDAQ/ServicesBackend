@@ -55,13 +55,14 @@ bool MulticastWorkers::Execute(){
 	if(time_since_last < std::chrono::milliseconds(1000)) return true;
 	last_exec = time_now;
 	
-	printf("messages processed: %d (%.0f MB),\t logs: %d (%.0f MB),\tmons: %d (%.0f MB)\n",
+	/*printf("messages processed: %d (%.0f MB),\t logs: %d (%.0f MB),\tmons: %d (%.0f MB)\n",
 	       monitoring_vars.msgs_processed.load(),
 	       double(monitoring_vars.bytes_processed.load())/1E6,
 	       monitoring_vars.logs_processed.load(),
 	       double(monitoring_vars.logging_bytes_processed.load())/1E6,
 	       monitoring_vars.mons_processed.load(),
 	       double(monitoring_vars.monitoring_bytes_processed.load())/1E6);
+	*/
 	
 	return true;
 }
@@ -222,7 +223,7 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 			m_args->decompressed_bytes = ZSTD_getFrameContentSize(next_msg.data(), next_msg.size());
 			if(m_args->decompressed_bytes==ZSTD_CONTENTSIZE_UNKNOWN || m_args->decompressed_bytes==ZSTD_CONTENTSIZE_ERROR){
 				// bad message, discard // FIXME log it
-				printf("%s ignoring zstd bad multicast message '%s'\n",m_args->m_job_name.c_str(), next_msg.c_str());
+//				printf("%s ignoring zstd bad multicast message '%s'\n",m_args->m_job_name.c_str(), next_msg.c_str());
 				continue;
 			}
 			if(m_args->decompressed_bytes > MAX_DECOMPRESSED_MSG_SIZE){
@@ -250,7 +251,7 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 //		printf("validating first 9 chars are topic: '%s', %d\n",m_args->the_msg.substr(0,9).c_str(),strcmp(m_args->the_msg.substr(0,9).c_str(),"{\"topic\":"));
 		if(m_args->the_msg.substr(0,9)!="{\"topic\":"){
 			// FIXME log it as bad multicast
-			printf("%s ignoring bad multicast message '%.*s'\n",m_args->m_job_name.c_str(), m_args->the_msg.size(), m_args->the_msg.data());
+//			printf("%s ignoring bad multicast message '%.*s'\n",m_args->m_job_name.c_str(), m_args->the_msg.size(), m_args->the_msg.data());
 			continue;
 		}
 		
@@ -277,7 +278,7 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 		// FIXME can we make this use moving write-head instead of copying?
 		if(m_args->out_buffer->length()>1) (*m_args->out_buffer) += ", ";
 		(*m_args->out_buffer) += m_args->the_msg;
-		//printf("%s added message '%s'\n",m_args->m_job_name.c_str(), m_args->the_msg.c_str());
+		//printf("%s added message '%.*s'\n",m_args->m_job_name.c_str(), m_args->the_msg.length(), m_args->the_msg.data());
 		
 		m_args->monitoring_vars->bytes_processed += m_args->the_msg.size(); // FIXME assumes this job completes successfully
 		

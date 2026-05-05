@@ -135,13 +135,14 @@ bool DatabaseWorkers::Execute(){
 	if(time_since_last < std::chrono::milliseconds(1000)) return true;
 	last_exec = time_now;
 	
-	printf("%-20s\tlogs processed: %d\tbytes: %d\tmons processed:%d\tbytes: %d\tjobs completed: %d\n",
+/*	printf("%-20s\tlogs processed: %d\tbytes: %d\tmons processed:%d\tbytes: %d\tjobs completed: %d\n",
 	       m_tool_name.c_str(),
 	       monitoring_vars.logging_submissions.load(),
 	       monitoring_vars.logging_bytes.load(),
 	       monitoring_vars.monitoring_submissions.load(),
 	       monitoring_vars.monitoring_bytes.load(),
 	       monitoring_vars.jobs_completed.load());
+*/
 	
 	return true;
 }

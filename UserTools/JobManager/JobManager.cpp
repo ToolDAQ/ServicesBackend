@@ -48,7 +48,7 @@ bool JobManager::Execute(){
 	
 	if(worker_pool_manager->NumThreads()==m_thread_cap) std::cerr<<"Warning: Worker Pool Threads Maxed"<<std::endl;
 	
-	printf("%-20s\tqueued jobs:%d\tactive threads: %d\n",m_tool_name.c_str(), m_data->job_queue.size(), worker_pool_manager->NumThreads());
+//	printf("%-20s\tqueued jobs:%d\tactive threads: %d\n",m_tool_name.c_str(), m_data->job_queue.size(), worker_pool_manager->NumThreads());
 	//worker_pool_manager->PrintStats();  // print queued jobs, total workers, per job breakdown etc. trailing blank line...
 	//printf("printing stats\n");
 	//m_data->job_queue.Print();
