@@ -12,9 +12,9 @@ bool Sleep::Initialise(std::string configfile, DataModel &data){
 	
 	ExportConfiguration();
 	
-	unsigned int period_ms = 10;
-	m_variables.Get("period_ms",period_ms);
-	toolchain_period_ms = std::chrono::milliseconds{period_ms};
+	unsigned int period_us = 10;
+	m_variables.Get("period_us",period_us);
+	toolchain_period_us = std::chrono::microseconds{period_us};
 	
 	last_execute = std::chrono::steady_clock::now();
 	
@@ -24,7 +24,7 @@ bool Sleep::Initialise(std::string configfile, DataModel &data){
 
 bool Sleep::Execute(){
 	
-	std::this_thread::sleep_until(last_execute+toolchain_period_ms);
+	std::this_thread::sleep_until(last_execute+toolchain_period_us);
 	last_execute = std::chrono::steady_clock::now();
 	
 	return true;

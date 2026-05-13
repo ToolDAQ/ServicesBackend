@@ -11,7 +11,7 @@ alerts_send 1            # enable ability to send global alerts
 alert_send_port 12252    # port to send global alerts
 alerts_receive 1         # enable ability to receive global alerts
 alert_receive_port 12253 # port to receive global alerts
-sc_port 65000              # port for slow control
+sc_port 6500              # port for slow control
 
 ###### Logging #####
 log_interactive 1	 # Interactive=cout; 0=false, 1= true
@@ -36,8 +36,8 @@ services_backend_verbosity 1	#
 max_retries 3			#
 resend_period_ms 1000		#
 print_stats_period_ms 1000	#
-clt_pub_port 55556    		#
-clt_dlr_port 55555		#
+clt_pub_port 5556    		#
+clt_dlr_port 5555		#
 clt_pub_socket_timeout 500	#
 clt_dlr_socket_timeout 500	#
 inpoll_timeout 50      		# keep these short!

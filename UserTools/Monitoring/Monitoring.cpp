@@ -17,6 +17,16 @@ bool Monitoring::Initialise(std::string configfile, DataModel &data){
 	m_variables.Get("monitoring_period_ms",monitoring_period_ms);
 	
 	ExportConfiguration();
+
+	int sc_port = m_data->vars.Get<int>("sc_port");
+	bool alerts_send = m_data->vars.Get<int>("alerts_send");
+	int alert_send_port = m_data->vars.Get<int>("alert_send_port");
+	bool alerts_receive = m_data->vars.Get<int>("alerts_receive");
+	int alert_receive_port = m_data->vars.Get<int>("alert_receive_port");
+	int poll_length_ms = 100;
+	bool new_service=true;
+	m_data->sc_vars.InitThreadedReceiver(m_data->context, sc_port, poll_length_ms, new_service, alert_receive_port, alerts_receive, alert_send_port, alerts_send);
+	m_data->num_threads++;
 	
 	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
 	m_data->monitoring_variables.emplace(m_tool_name, &monitoring_vars);
@@ -65,6 +75,10 @@ bool Monitoring::Finalise(){
 	
 	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
 	m_data->monitoring_variables.erase(m_tool_name);
+	
+	// stop slow control background thread
+	m_data->sc_vars.Stop();
+	m_data->num_threads--;
 	
 	Log("Finished",v_warning);
 	return true;

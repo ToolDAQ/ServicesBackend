@@ -26,7 +26,7 @@ class Sleep: public Tool {
 	
 	private:
 	std::chrono::time_point<std::chrono::steady_clock> last_execute;
-	std::chrono::milliseconds toolchain_period_ms;
+	std::chrono::microseconds toolchain_period_us;
 	
 };
 

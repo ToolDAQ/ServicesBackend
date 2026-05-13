@@ -1,2 +1,3 @@
 verbose 1
-period_ms 10
+#period_us 100000
+period_us 1000
