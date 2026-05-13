@@ -20,12 +20,15 @@
 # data files
 *.root
 # core dumps
-core
+core*
 # ToolFramework log files
 log.e
 log.o
 # ToolFramework UUIDs
 UUID
+# control files
+stop
+quit
 
 # the dependencies symlink
 Dependencies
