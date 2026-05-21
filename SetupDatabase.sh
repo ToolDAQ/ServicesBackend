@@ -25,7 +25,7 @@ echo "LD_LIBRARY_PATH+=:/usr/pgsql-18/lib" >> SetupDB.sh
 
 # only take action on first run
 if [ -f /.DBSetupDone ]; then
-	
+
 	# systemd version for baremetal
 	if [ ${USE_SYSTEMD} -eq 0 ]; then
 		# note no [ ] in following check
@@ -94,14 +94,14 @@ if [ ${USE_SYSTEMD} -eq 0 ]; then
 		Environment=PGDATA=${PGDATA}
 		EOF
 	fi
-	
+
 	# systemd version
 	sudo systemctl enable --now postgresql-18
 else
 	# container version
 	sudo mkdir -p /var/run/postgresql && sudo chown -R postgres /var/run/postgresql
 	sudo -u postgres $(which pg_ctl) start -D ${PGDATA} -s -o "-p 5432" -w -t 300
-	
+
 	#echo "registering database to start on boot"
 	#echo " sudo -u postgres $(which pg_ctl) start -D ${PGDATA} -s -o \"-p 5432\" -w -t 300;" >> /etc/rc.local
 fi
@@ -164,7 +164,7 @@ psql -ddaq -c "CREATE TABLE run_info (run_number serial PRIMARY KEY, start_time 
 
 echo "creating devices table"
 # more fields: created on, by? retired by, retirement cause? device description?
-psql -ddaq -c "CREATE TABLE devices (name text NOT NULL, retired boolean NOT NULL DEFAULT FALSE, retired_on timestamp with time zone DEFAULT NULL, unique(name));"
+psql -ddaq -c "CREATE TABLE devices (name text NOT NULL, description TEXT, author_id INTEGER NOT NULL, created_time TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(), retired_time TIMESTAMP WITH TIME ZONE, retired_user_id INTEGER, retired boolean NOT NULL DEFAULT FALSE, unique(name));"
 
 # functional index to ensure no duplicates even ignoring case
 # unfortunately to use it as a foreign key we need a redundant unique constraint on the value itself as well
@@ -335,6 +335,12 @@ psql -ddaq -c "CREATE OR REPLACE FUNCTION public.CheckUserExists(resolution_user
 echo "creating function to validate username/password"
 psql -ddaq -c "CREATE OR REPLACE FUNCTION public.ValidateUser(p_username text, p_password_hash text) RETURNS boolean LANGUAGE sql SECURITY DEFINER SET search_path TO 'public' AS \$function$ SELECT COALESCE((SELECT u.password_hash = p_password_hash FROM public.users u WHERE u.username = p_username), FALSE ); \$function$"
 
+echo "Create UseridFromUsername function"
+psql -ddaq -c 'CREATE OR REPLACE FUNCTION public.UserIdFromUsername(p_username TEXT) RETURNS INTEGER LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$ SELECT user_id FROM public.users WHERE username = p_username;$$;'
+
+echo "Create UsernameFromUserId function"
+psql -ddaq -c 'CREATE OR REPLACE FUNCTION public.UsernameFromUserId(p_user_id INTEGER ) RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$SELECT username FROM public.users WHERE user_id = p_user_id;$$;'
+
 # add a database role for the webserver
 echo "adding webserver database role"
 psql -ddaq -c "CREATE ROLE webserver LOGIN"
@@ -349,12 +355,14 @@ psql -ddaq -c "REVOKE SELECT ON TABLE users FROM webserver;"
 # not sure if these are needed, are they covered by usage of all routines on public?
 psql -ddaq -c "GRANT EXECUTE ON FUNCTION ValidateUser(text, text) TO webserver";
 psql -ddaq -c "GRANT EXECUTE ON FUNCTION public.CheckUserExists(text, text) TO webserver";
+psql -ddaq -c 'GRANT EXECUTE ON FUNCTION public.UsernameFromUserId(integer) TO webserver;'
+psql -ddaq -c "GRANT EXECUTE ON FUNCTION public.UserIdFromUsername(text) TO webserver;"
 
 # DEFAULT DATA
 ###############
 # Insert a default user for testing
 echo "Inserting a default user"
-psql -ddaq -c "INSERT INTO users (username, password_hash) VALUES ('dev_user', 'c20cc404fe15337ce6d8a5b782576d9a21de03f8707065c8ccf7abb1cc939801');"
+psql -ddaq -c "INSERT INTO users (username, password_hash) VALUES ('dev_user', 'bc4b6bbcb5e2a5b37b0cc975d416c83b0a67d3a3ce7e2427c26b629373285f49');"
 
 echo "Inserting example device"
 psql -ddaq -c "INSERT INTO devices (name) VALUES ('test_device');"
