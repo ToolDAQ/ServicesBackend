@@ -13,3 +13,4 @@
 //#include "QueueTrimmer.h"
 //#include "MiddlemanNegotiate.h"
 #include "ReadWorkers.h"
+#include "TestAlerts.h"
