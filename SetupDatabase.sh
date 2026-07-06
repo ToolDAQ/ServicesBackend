@@ -344,7 +344,7 @@ psql -ddaq -c 'CREATE OR REPLACE FUNCTION public.UsernameFromUserId(p_user_id IN
 # add a database role for the webserver
 echo "adding webserver database role"
 psql -ddaq -c "CREATE ROLE webserver LOGIN"
-psql -ddaq -c "GRANT SELECT, INSERT UPDATE, ON ALL TABLES IN SCHEMA public TO webserver;"
+psql -ddaq -c "GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO webserver;"
 psql -ddaq -c "GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO webserver;"
 psql -ddaq -c "GRANT EXECUTE ON ALL ROUTINES IN SCHEMA public TO webserver;"
 psql -ddaq -c "GRANT CONNECT, TEMPORARY ON DATABASE daq TO webserver;"
