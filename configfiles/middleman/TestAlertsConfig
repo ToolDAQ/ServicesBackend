@@ -1,0 +1,2 @@
+verbose 4
+alert_names RunStart RunStop ChangeConfig CacheConfig LoadConfig
