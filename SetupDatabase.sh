@@ -341,11 +341,14 @@ psql -ddaq -c 'CREATE OR REPLACE FUNCTION public.UserIdFromUsername(p_username T
 echo "Create UsernameFromUserId function"
 psql -ddaq -c 'CREATE OR REPLACE FUNCTION public.UsernameFromUserId(p_user_id INTEGER ) RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $\function$ SELECT username FROM public.users WHERE user_id = p_user_id;$\function$;'
 
+echo "Create RetireAllBaseConfigurations function"
+psql -ddaq -c 'CREATE OR REPLACE FUNCTION public.RetireAllBaseConfigurations() RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER SET search_path= public AS $\function$ UPDATE base_config SET retired = TRUE SELECT TRUE $\function$;'
+
 # add a database role for the webserver
 echo "adding webserver database role"
 psql -ddaq -c "CREATE ROLE webserver LOGIN"
 psql -ddaq -c "GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO webserver;"
-psql -ddaq -c "GRANT UPDATE ON alarms, devices, base_config TO webserver;"
+psql -ddaq -c "GRANT UPDATE ON alarms, devices TO webserver;"
 psql -ddaq -c "GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO webserver;"
 psql -ddaq -c "GRANT EXECUTE ON ALL ROUTINES IN SCHEMA public TO webserver;"
 psql -ddaq -c "GRANT CONNECT, TEMPORARY ON DATABASE daq TO webserver;"
@@ -358,6 +361,7 @@ psql -ddaq -c "GRANT EXECUTE ON FUNCTION ValidateUser(text, text) TO webserver";
 psql -ddaq -c "GRANT EXECUTE ON FUNCTION public.CheckUserExists(text, text) TO webserver";
 psql -ddaq -c 'GRANT EXECUTE ON FUNCTION public.UsernameFromUserId(integer) TO webserver;'
 psql -ddaq -c "GRANT EXECUTE ON FUNCTION public.UserIdFromUsername(text) TO webserver;"
+psql -ddaq -c "GRANT EXECUTE ON FUNCTION public.RetireAllBaseConfigurations() TO webserver;"
 
 # DEFAULT DATA
 ###############
