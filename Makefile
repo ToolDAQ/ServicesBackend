@@ -3,16 +3,13 @@ ToolFrameworkCore=$(Dependencies)/ToolFrameworkCore
 ToolDAQFramework=$(Dependencies)/ToolDAQFramework
 SOURCEDIR=`pwd`
 
-CXXFLAGS= -g -fmax-errors=3 -fPIC -std=c++20 -Wno-comment -Werror=array-bounds -Werror=return-type -march=native -Ofast # -Wpedantic -Wall -Wno-unused -Wextra -Wcast-align -Wcast-qual -Wctor-dtor-privacy -Wdisabled-optimization -Wformat=2 -Winit-self -Wlogical-op -Wmissing-declarations -Wmissing-include-dirs -Wnoexcept  -Woverloaded-virtual -Wredundant-decls -Wshadow -Wsign-conversion -Wsign-promo -Wstrict-null-sentinel -Wstrict-overflow=5 -Wswitch-default -Wundef #-Werror -Wold-style-cast
+CXXFLAGS= -g -fmax-errors=3 -fPIC -std=c++20 -Wno-comment -Werror=array-bounds -Werror=return-type -Ofast # -Wpedantic -Wall -Wno-unused -Wextra -Wcast-align -Wcast-qual -Wctor-dtor-privacy -Wdisabled-optimization -Wformat=2 -Winit-self -Wlogical-op -Wmissing-declarations -Wmissing-include-dirs -Wnoexcept  -Woverloaded-virtual -Wredundant-decls -Wshadow -Wsign-conversion -Wsign-promo -Wstrict-null-sentinel -Wstrict-overflow=5 -Wswitch-default -Wundef #-Werror -Wold-style-cast
 
-LTO_AUTO_SUPPORTED := $(shell echo 'int main(){}' | $(CXX) -x c++ -flto=auto -c -o /tmp/lto-test.o - >/dev/null 2>&1 && echo 1 || echo 0)
+DISABLE_LTO ?= 0
 
-ifeq ($(LTO_AUTO_SUPPORTED),1)
+ifeq ($(DISABLE_LTO),0)
   CXXFLAGS += -flto=auto
   LDFLAGS  += -flto=auto
-else
-  CXXFLAGS += -flto
-  LDFLAGS  += -flto
 endif
 
 ifeq ($(MAKECMDGOALS),debug)
