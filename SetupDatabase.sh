@@ -164,7 +164,7 @@ psql -ddaq -c "CREATE TABLE run_info (run_number serial PRIMARY KEY, start_time 
 
 echo "creating devices table"
 # more fields: created on, by? retired by, retirement cause? device description?
-psql -ddaq -c "CREATE TABLE devices (name text NOT NULL, retired boolean NOT NULL DEFAULT FALSE, retired_on timestamp with time zone DEFAULT NULL, unique(name));"
+psql -ddaq -c "CREATE TABLE devices (name text NOT NULL, description TEXT, author_id INTEGER NOT NULL, created_time TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(), retired_time TIMESTAMP WITH TIME ZONE DEFAULT NULL, retired_user_id INTEGER DEFAULT NULL, retired boolean NOT NULL DEFAULT FALSE);"
 
 # functional index to ensure no duplicates even ignoring case
 # unfortunately to use it as a foreign key we need a redundant unique constraint on the value itself as well
@@ -335,10 +335,17 @@ psql -ddaq -c "CREATE OR REPLACE FUNCTION public.CheckUserExists(resolution_user
 echo "creating function to validate username/password"
 psql -ddaq -c "CREATE OR REPLACE FUNCTION public.ValidateUser(p_username text, p_password_hash text) RETURNS boolean LANGUAGE sql SECURITY DEFINER SET search_path TO 'public' AS \$function$ SELECT COALESCE((SELECT u.password_hash = p_password_hash FROM public.users u WHERE u.username = p_username), FALSE ); \$function$"
 
+echo "Create UseridFromUsername function"
+psql -ddaq -c 'CREATE OR REPLACE FUNCTION public.UserIdFromUsername(p_username TEXT) RETURNS INTEGER LANGUAGE sql SECURITY DEFINER SET search_path = public AS \$function$ SELECT user_id FROM public.users WHERE username = p_username;$\function$;'
+
+echo "Create UsernameFromUserId function"
+psql -ddaq -c 'CREATE OR REPLACE FUNCTION public.UsernameFromUserId(p_user_id INTEGER ) RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $\function$ SELECT username FROM public.users WHERE user_id = p_user_id;$\function$;'
+
 # add a database role for the webserver
 echo "adding webserver database role"
 psql -ddaq -c "CREATE ROLE webserver LOGIN"
 psql -ddaq -c "GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO webserver;"
+psql -ddaq -c "GRANT UPDATE ON alarms, devices, base_config TO webserver;"
 psql -ddaq -c "GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO webserver;"
 psql -ddaq -c "GRANT EXECUTE ON ALL ROUTINES IN SCHEMA public TO webserver;"
 psql -ddaq -c "GRANT CONNECT, TEMPORARY ON DATABASE daq TO webserver;"
@@ -349,6 +356,8 @@ psql -ddaq -c "REVOKE SELECT ON TABLE users FROM webserver;"
 # not sure if these are needed, are they covered by usage of all routines on public?
 psql -ddaq -c "GRANT EXECUTE ON FUNCTION ValidateUser(text, text) TO webserver";
 psql -ddaq -c "GRANT EXECUTE ON FUNCTION public.CheckUserExists(text, text) TO webserver";
+psql -ddaq -c 'GRANT EXECUTE ON FUNCTION public.UsernameFromUserId(integer) TO webserver;'
+psql -ddaq -c "GRANT EXECUTE ON FUNCTION public.UserIdFromUsername(text) TO webserver;"
 
 # DEFAULT DATA
 ###############
