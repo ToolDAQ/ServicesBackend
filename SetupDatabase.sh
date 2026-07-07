@@ -336,13 +336,13 @@ echo "creating function to validate username/password"
 psql -ddaq -c "CREATE OR REPLACE FUNCTION public.ValidateUser(p_username text, p_password_hash text) RETURNS boolean LANGUAGE sql SECURITY DEFINER SET search_path TO 'public' AS \$function$ SELECT COALESCE((SELECT u.password_hash = p_password_hash FROM public.users u WHERE u.username = p_username), FALSE ); \$function$"
 
 echo "Create UseridFromUsername function"
-psql -ddaq -c 'CREATE OR REPLACE FUNCTION public.UserIdFromUsername(p_username TEXT) RETURNS INTEGER LANGUAGE sql SECURITY DEFINER SET search_path = public AS \$function$ SELECT user_id FROM public.users WHERE username = p_username;$\function$;'
+psql -ddaq -c "CREATE OR REPLACE FUNCTION public.UserIdFromUsername(p_username TEXT) RETURNS INTEGER LANGUAGE sql SECURITY DEFINER SET search_path TO 'public' AS \$function$ SELECT user_id FROM public.users WHERE username = p_username;\$function$"
 
 echo "Create UsernameFromUserId function"
-psql -ddaq -c 'CREATE OR REPLACE FUNCTION public.UsernameFromUserId(p_user_id INTEGER ) RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $\function$ SELECT username FROM public.users WHERE user_id = p_user_id;$\function$;'
+psql -ddaq -c "CREATE OR REPLACE FUNCTION public.UsernameFromUserId(p_user_id INTEGER ) RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS \$function$ SELECT username FROM public.users WHERE user_id = p_user_id;\$function$"
 
 echo "Create RetireAllBaseConfigurations function"
-psql -ddaq -c 'CREATE OR REPLACE FUNCTION public.RetireAllBaseConfigurations() RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER SET search_path= public AS $\function$ UPDATE base_config SET retired = TRUE SELECT TRUE $\function$;'
+psql -ddaq -c "CREATE OR REPLACE FUNCTION public.RetireAllBaseConfigurations() RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER SET search_path TO 'public' AS \$function$ UPDATE base_config SET retired = TRUE; SELECT TRUE \$function$"
 
 # add a database role for the webserver
 echo "adding webserver database role"
@@ -370,7 +370,7 @@ echo "Inserting a default user"
 psql -ddaq -c "INSERT INTO users (username, password_hash) VALUES ('dev_user', 'c20cc404fe15337ce6d8a5b782576d9a21de03f8707065c8ccf7abb1cc939801');"
 
 echo "Inserting example device"
-psql -ddaq -c "INSERT INTO devices (name) VALUES ('test_device');"
+psql -ddaq -c "INSERT INTO devices (name, author_id) VALUES ('test_device', (select user_id from users where username='dev_user'));"
 
 echo "Inserting example monitoring data"
 psql -ddaq -c "INSERT INTO monitoring (time, device, subject, data) SELECT now() - (i * INTERVAL '1 minute') AS time, 'test_device' AS device, 'general' AS subject, json_build_object( 'temperature', round((random() * 50 + 10)::numeric, 2), 'humidity', round((random() * 100)::numeric, 2)) AS data FROM generate_series(1, 100) i;"
