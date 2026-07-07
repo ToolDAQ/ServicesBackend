@@ -341,7 +341,7 @@ psql -ddaq -c 'CREATE OR REPLACE FUNCTION public.UserIdFromUsername(p_username T
 echo "Create UsernameFromUserId function"
 psql -ddaq -c 'CREATE OR REPLACE FUNCTION public.UsernameFromUserId(p_user_id INTEGER ) RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $\function$ SELECT username FROM public.users WHERE user_id = p_user_id;$\function$;'
 
-echo "Create RetireAllBaseConfiguraions function"
+echo "Create RetireAllBaseConfigurations function"
 psql -ddaq -c 'CREATE OR REPLACE FUNCTION public.RetireAllBaseConfigurations() RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER SET search_path= public AS $\function$ UPDATE base_config SET retired = TRUE SELECT TRUE $\function$;'
 
 # add a database role for the webserver
