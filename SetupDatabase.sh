@@ -164,7 +164,7 @@ psql -ddaq -c "CREATE TABLE run_info (run_number serial PRIMARY KEY, start_time 
 
 echo "creating devices table"
 # more fields: created on, by? retired by, retirement cause? device description?
-psql -ddaq -c "CREATE TABLE devices (name text NOT NULL, description TEXT, author_id INTEGER NOT NULL, created_time TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(), retired_time TIMESTAMP WITH TIME ZONE DEFAULT NULL, retired_user_id INTEGER, retired boolean NOT NULL DEFAULT FALSE);"
+psql -ddaq -c "CREATE TABLE devices (name text NOT NULL, description TEXT, author_id INTEGER NOT NULL, created_time TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(), retired_time TIMESTAMP WITH TIME ZONE DEFAULT NULL, retired_user_id INTEGER DEFAULT NULL, retired boolean NOT NULL DEFAULT FALSE);"
 
 # functional index to ensure no duplicates even ignoring case
 # unfortunately to use it as a foreign key we need a redundant unique constraint on the value itself as well
