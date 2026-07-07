@@ -25,7 +25,7 @@ echo "LD_LIBRARY_PATH+=:/usr/pgsql-18/lib" >> SetupDB.sh
 
 # only take action on first run
 if [ -f /.DBSetupDone ]; then
-
+	
 	# systemd version for baremetal
 	if [ ${USE_SYSTEMD} -eq 0 ]; then
 		# note no [ ] in following check
@@ -94,14 +94,14 @@ if [ ${USE_SYSTEMD} -eq 0 ]; then
 		Environment=PGDATA=${PGDATA}
 		EOF
 	fi
-
+	
 	# systemd version
 	sudo systemctl enable --now postgresql-18
 else
 	# container version
 	sudo mkdir -p /var/run/postgresql && sudo chown -R postgres /var/run/postgresql
 	sudo -u postgres $(which pg_ctl) start -D ${PGDATA} -s -o "-p 5432" -w -t 300
-
+	
 	#echo "registering database to start on boot"
 	#echo " sudo -u postgres $(which pg_ctl) start -D ${PGDATA} -s -o \"-p 5432\" -w -t 300;" >> /etc/rc.local
 fi
@@ -362,7 +362,7 @@ psql -ddaq -c "GRANT EXECUTE ON FUNCTION public.UserIdFromUsername(text) TO webs
 ###############
 # Insert a default user for testing
 echo "Inserting a default user"
-psql -ddaq -c "INSERT INTO users (username, password_hash) VALUES ('dev_user', 'bc4b6bbcb5e2a5b37b0cc975d416c83b0a67d3a3ce7e2427c26b629373285f49');"
+psql -ddaq -c "INSERT INTO users (username, password_hash) VALUES ('dev_user', 'c20cc404fe15337ce6d8a5b782576d9a21de03f8707065c8ccf7abb1cc939801');"
 
 echo "Inserting example device"
 psql -ddaq -c "INSERT INTO devices (name) VALUES ('test_device');"
