@@ -20,6 +20,7 @@ if (tool=="JobManager") ret=new JobManager;
 if (tool=="Sleep") ret=new Sleep;
 if (tool=="ReadWorkers") ret=new ReadWorkers;
 if (tool=="TestAlerts") ret=new TestAlerts;
+if (tool=="StopQuitFile") ret=new StopQuitFile;
 
 return ret;
 }

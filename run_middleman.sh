@@ -36,7 +36,7 @@ while read -r -a LINE; do
 		#echo "stopfile: ${LINE[1]}";
 		STOPFILE="${LINE[1]}";
 	fi;
-done < <(cat ./configfiles/middleman/ToolChainConfig)
+done < <(cat ./configfiles/middleman/StopQuitFileConfig)
 
 if [ -f ${QUITFILE} ]; then
 	rm ${QUITFILE}
@@ -53,6 +53,7 @@ while [ true ]; do
 	echo -n "middleman exited with code $? at " >> middleman_runs.log
 	date >> middleman_runs.log
 	sleep 1
+	rm -f ${STOPFILE}
 	if [ -f ${QUITFILE} ]; then
 		rm $QUITFILE
 		break;

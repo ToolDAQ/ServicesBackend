@@ -71,9 +71,26 @@ select result in OK Change Cancel; do
 	esac
 done
 
-if [ ! -d ${PGROOT} ]; then
-	mkdir -p ${PGROOT}
+# initdb requires a clean directory, so remove any existing
+if [ -d ${PGROOT} ] && [ ! -n "$(find ${PGROOT} -prune -empty -type d 2>/dev/null)" ]; then
+	echo "${PGROOT} is not empty - any existing database will be completely cleared. Continue?";
+	select result in OK Cancel; do
+		case $result in
+			OK)
+				break;
+				;;
+			Cancel)
+				exit 0;
+				;;
+			*)
+				echo "enter 1 or 2"
+				;;
+		esac
+	done
 fi
+
+rm -rf ${PGROOT}
+mkdir -p ${PGROOT}
 chown -R postgres:postgres ${PGROOT}
 cd ${PGROOT}
 # FIXME

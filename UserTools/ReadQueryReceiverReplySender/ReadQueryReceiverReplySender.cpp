@@ -87,6 +87,8 @@ bool ReadQueryReceiverReplySender::Initialise(std::string configfile, DataModel 
 	thread_args.in_poll = zmq::pollitem_t{*managed_socket->socket,0,ZMQ_POLLIN,0};
 	thread_args.out_poll = zmq::pollitem_t{*managed_socket->socket,0,ZMQ_POLLOUT,0};
 	thread_args.in_local_queue = m_data->querybatch_pool.GetNew(local_buffer_size);
+	thread_args.out_local_queue = nullptr;
+	thread_args.out_i = 0;
 	thread_args.make_new = true;
 	thread_args.local_buffer_size = local_buffer_size;
 	thread_args.transfer_period_ms = std::chrono::milliseconds{transfer_period_ms};
@@ -272,7 +274,7 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 				m_args->make_new=true;
 				++(m_args->monitoring_vars->msgs_rcvd);
 				// XXX
-				//printf("%s received query %u, '%s' message '%s' into ZmqQuery at %p\n",m_args->m_tool_name.c_str(), msg_buf.msg_id(), msg_buf.topic().data(), msg_buf.msg_raw().data(), &msg_buf);
+				//printf("%s received query %u, '%s' message '%.*s' into ZmqQuery at %p\n",m_args->m_tool_name.c_str(), msg_buf.msg_id(), msg_buf.topic().data(), msg_buf.msg_raw().size(), msg_buf.msg_raw().data(), &msg_buf);
 				
 			}
 			
