@@ -1,5 +1,5 @@
-#ifndef TestAlerts_H
-#define TestAlerts_H
+#ifndef StopQuitFile_H
+#define StopQuitFile_H
 
 #include <string>
 #include <iostream>
@@ -9,32 +9,30 @@
 #include "DataModel.h"
 
 /**
-* \class TestAlerts
+* \class StopQuitFile
 *
-* This is a simple tool to test the application is receiving alerts by logging alerts received to a file.
-* Note these must be dummy alerts, since we cannot yet register multiple callbacks to alerts,
+* Tool to monitor for the presence of a stop and quit file, and terminate the toolchain if found.
 *
-* $Author: M.O'Flaherty $
+* $Author: M. O'Flaherty $
 * $Date: 2026/07/06 $
 */
 
-class TestAlerts: public Tool {
-
-
- public:
-
-  TestAlerts(); ///< Simple constructor
+class StopQuitFile: public Tool {
+  
+  public:
+  
+  StopQuitFile(); ///< Simple constructor
   bool Initialise(std::string configfile,DataModel &data); ///< Initialise Function for setting up Tool resources. @param configfile The path and name of the dynamic configuration file to read in. @param data A reference to the transient data class used to pass information between Tools.
   bool Execute(); ///< Execute function used to perform Tool purpose.
   bool Finalise(); ///< Finalise function used to clean up resources.
-  bool LoadConfig();
-
- private:
-
- std::string m_configfile;
- bool AlertReceive(const char* alert_name, const char* alert_payload);
- std::ofstream out_file;
-
+  bool LoadConfig(); ///< Initialise variables from configuration store.
+  
+  
+  private:
+  std::string stop_file;
+  std::string quit_file;
+  std::ifstream test;
+  
 };
 
 

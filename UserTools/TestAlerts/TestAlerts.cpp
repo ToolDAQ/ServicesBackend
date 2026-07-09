@@ -2,14 +2,11 @@
 
 TestAlerts::TestAlerts():Tool(){}
 
-std::ofstream TestAlerts::out_file = std::ofstream{};
-
-int TestAlerts::verb=1;
-
 bool TestAlerts::Initialise(std::string configfile, DataModel &data){
 	
 	m_configfile=configfile;
 	InitialiseTool(data);
+	InitialiseConfiguration(m_configfile);
 	LoadConfig();
 	ExportConfiguration();
 	
@@ -39,7 +36,6 @@ bool TestAlerts::Finalise(){
 bool TestAlerts::LoadConfig(){
 	
 	m_variables.Get("verbose",m_verbose);
-	verb=m_verbose; // static used by thread
 	
 	std::string out_fname = "./alert_tester.log";
 	if(!m_variables.Get("out_file",out_fname));
@@ -56,11 +52,13 @@ bool TestAlerts::LoadConfig(){
 	}
 	std::stringstream alert_names;
 	alert_names.str(next_alert);
+	boost::posix_time::ptime now = boost::posix_time::microsec_clock::universal_time();
 	while(alert_names >> next_alert){
 		Log("Subscribed to alert '"+next_alert+"'",v_message,m_verbose);
-		m_data->services->AlertSubscribe(next_alert, &AlertReceive);
+		bool ok = m_data->services->AlertSubscribe(next_alert, std::bind(&TestAlerts::AlertReceive, this, std::placeholders::_1, std::placeholders::_2));
+		out_file << now << "subscribing to alert '" << next_alert << "' returned " << ok << std::endl;
 	}
-	                      
+	
 	ExportConfiguration();
 	
 	return true;
@@ -70,9 +68,10 @@ bool TestAlerts::LoadConfig(){
 bool TestAlerts::AlertReceive(const char* alert_name, const char* alert_payload){
 	
 	boost::posix_time::ptime now = boost::posix_time::microsec_clock::universal_time();
-	out_file << now << " " << /*m_data->coarse_counts << " " << */ alert_name << " " << alert_payload << std::endl;
-	/*if(verb>3)*/ std::clog<<"TestAlerts received '"<<alert_name<<"' at "<<boost::posix_time::to_simple_string(now) 
-	                  /*<<", coarse counter "<<m_data->coarse_counter*/ << ", with payload '"<<alert_payload<<"'"<<std::endl;
+	out_file << now << " " << alert_name << " " << alert_payload << std::endl;
+	if(m_verbose>3) std::cout << "TestAlerts received '" << alert_name << "' at "
+	                          << boost::posix_time::to_simple_string(now)
+	                          << ", with payload '" << alert_payload << "'" << std::endl;
 	
 	return true;
 }

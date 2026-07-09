@@ -317,10 +317,11 @@ std::string DatabaseWorkers::GetCachedConfigs(const char* arg){
 }
 
 bool DatabaseWorkers::CacheConfigs(const char* alertname, const char* payload){
-	std::cout<<"CacheConfigs alert with alert '"<<alertname<<"' and payload '"<<payload<<"'"<<std::endl;
 	if(m_data->sc_vars[alertname]){
 		m_data->sc_vars[alertname]->SetValue(payload);
 		CacheConfigs(alertname);
+		// FIXME for now clear this after attempting because JSON in control values breaks the webpage
+		m_data->sc_vars[alertname]->SetValue("");
 	} else {
 		// shouldn't really ever happen. This function is only triggered by alerts of the correct name...
 		std::cerr<<"CacheConfigs alert with unexpected alert name '"<<alertname<<"'"<<std::endl;
@@ -331,12 +332,13 @@ bool DatabaseWorkers::CacheConfigs(const char* alertname, const char* payload){
 std::string DatabaseWorkers::CacheConfigs(const char* arg){
 	
 	std::string payload = m_data->sc_vars.GetValue<std::string>(arg);
-	std::cout<<"CacheConfigs call with argument '"<<arg<<"', which now has value '"<<payload<<"'"<<std::endl;
 	
 	Store tmp;
 	tmp.JsonParser(payload);
-	bool ok = tmp.Get("base_config_id",m_base_config_id);
-	ok = ok && tmp.Get("runmode_config_id",m_runmode_config_id);
+	int new_base_config_id;
+	int new_runmode_config_id;
+	bool ok = tmp.Get("base_config_id",new_base_config_id);
+	ok = ok && tmp.Get("runmode_config_id",new_runmode_config_id);
 	if(!ok){
 		// FIXME cerr -> Log
 		std::string err = "Error parsing CacheConfigs alert: '"+std::string{payload}+"' does not contain 'base_config_id' and 'runmode_config_id' int keys";
@@ -359,12 +361,13 @@ std::string DatabaseWorkers::CacheConfigs(const char* arg){
 		                    "   merged AS ( SELECT base.data || runmode.data AS data FROM base CROSS JOIN runmode), "
 		                    " expanded AS ( SELECT key AS device, value AS version FROM merged CROSS JOIN jsonb_each(merged.data) ) "
 		                    "SELECT f.device, json_build_object('version', f.version, 'data', dc.data, 'base_config_id', $1, 'runmode_config_id', $2 ) "
-		                    "FROM flattened f JOIN device_config dc ON f.device=dc.device AND (f.version)::int=dc.version";
-		
-		for(auto [ device, json ] : tx.query<std::string_view, std::string_view>(query, pqxx::params(m_base_config_id, m_runmode_config_id))){
+		                    "FROM expanded f JOIN device_config dc ON f.device=dc.device AND (f.version)::int=dc.version";
+		for(auto [ device, json ] : tx.query<std::string_view, std::string_view>(query, pqxx::params(new_base_config_id, new_runmode_config_id))){
 			cached_configs[std::string{device}]=json;
 		}
 		std::swap(cached_configs, m_data->cached_configs);
+		m_base_config_id = new_base_config_id;
+		m_runmode_config_id = new_runmode_config_id;
 		
 	} catch (const pqxx::broken_connection &e){
 		// as usual the doxygen sucks, but it seems this doesn't provide
@@ -374,7 +377,6 @@ std::string DatabaseWorkers::CacheConfigs(const char* arg){
 		return e.what();
 	}
 	//  connection closes on destruction
-	
 	return GetCachedConfigs();
 }
 

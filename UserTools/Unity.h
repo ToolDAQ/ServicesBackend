@@ -14,3 +14,4 @@
 //#include "MiddlemanNegotiate.h"
 #include "ReadWorkers.h"
 #include "TestAlerts.h"
+#include "StopQuitFile.h"

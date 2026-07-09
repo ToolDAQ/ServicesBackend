@@ -1,2 +1,3 @@
 verbose 4
-alert_names RunStart RunStop ChangeConfig CacheConfig LoadConfig
+# remember: we can't have multiple callbacks for an alert, so don't provide anything we need an actual callback for!
+alert_names TestAlert StartRun StopRun

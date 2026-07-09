@@ -99,15 +99,18 @@ void SocketManager::Thread(Thread_args* args){
 		
 		if(new_conn_count!=0){
 			//m_args->m_data->services->SendLog(std::to_string(std::abs(new_conn_count))+" new connections to "+sock->service_name, v_message); // FIXME logging
-			printf("%d new %s connections made!\n",new_conn_count, sock->remote_port_name.c_str());
+			//printf("mm %d new %s connections made!\n",new_conn_count, sock->remote_port_name.c_str());
 			new_clients = true;
 			
 			// update the list of clients so they can be queried
 			for(std::pair<const std::string, Store*>& aservice : sock->connections){
+				std::string client_name = aservice.second->Get<std::string>("msg_value");
 				if(!m_args->clientsmap.count(aservice.first)){
-					m_args->clientsmap.emplace(aservice.first,sock->service_name);
+					//printf("mm adding new %s client with address %s, service '%s'\n",sock->remote_port_name.c_str(),aservice.first.c_str(),client_name.c_str());
+					m_args->clientsmap.emplace(aservice.first, client_name);
 				} else {
-					m_args->clientsmap.at(aservice.first)+= ", "+sock->service_name;
+					//printf("mm updating %s client with address %s, adding service '%s'\n",sock->remote_port_name.c_str(),aservice.first.c_str(),client_name.c_str());
+					m_args->clientsmap.at(aservice.first)+= ", "+client_name;
 				}
 			}
 			
