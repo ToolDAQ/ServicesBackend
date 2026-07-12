@@ -42,3 +42,4 @@ lib/*
 include/*
 
 middleman_runs.log
+alert_tester.log
