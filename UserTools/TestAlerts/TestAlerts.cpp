@@ -69,9 +69,19 @@ bool TestAlerts::AlertReceive(const char* alert_name, const char* alert_payload)
 	
 	boost::posix_time::ptime now = boost::posix_time::microsec_clock::universal_time();
 	out_file << now << " " << alert_name << " " << alert_payload << std::endl;
-	if(m_verbose>3) std::cout << "TestAlerts received '" << alert_name << "' at "
-	                          << boost::posix_time::to_simple_string(now)
-	                          << ", with payload '" << alert_payload << "'" << std::endl;
+	if(m_verbose>3){
+		std::cout << "TestAlerts received '" << alert_name << "' at "
+		          << boost::posix_time::to_simple_string(now);
+		if(alert_payload) std::cout << ", with payload '" << alert_payload << "'";
+		std::cout << std::endl;
+	}
+	
+	// the middleman would not normally handle this, but in lieu of a broker, we do it here
+	if(strcmp(alert_name,"RunStop")==0){
+		static const std::string query = "update run_info set stop_time='now()' where run_number=( select max(run_number) from run_info )";
+		std::string response;
+		m_data->services->SQLQuery(query, response);
+	}
 	
 	return true;
 }
