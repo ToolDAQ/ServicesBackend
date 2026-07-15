@@ -308,7 +308,7 @@ psql -ddaq -c 'CREATE TRIGGER trig_plotlyplot_ver BEFORE insert ON plotlyplots F
 
 echo "creating event_display table"
 # events themselves will be zstd compressed
-psql -ddaq -c "CREATE TABLE event_display (readout_number bigint PRIMARY KEY, run_number bigint NOT NULL, time timestamp with time zone NOT NULL DEFAULT now(), event_type integer NOT NULL, data bytea NOT NULL, type integer NOT NULL);"
+psql -ddaq -c "CREATE TABLE event_display (readout_number bigint PRIMARY KEY, run_number bigint NOT NULL, time timestamp with time zone NOT NULL DEFAULT now(),  data bytea NOT NULL, type integer NOT NULL);"
 
 echo "creating index on event type"
 # is this overkill?
