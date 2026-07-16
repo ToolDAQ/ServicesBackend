@@ -21,6 +21,8 @@ if (tool=="Sleep") ret=new Sleep;
 if (tool=="ReadWorkers") ret=new ReadWorkers;
 if (tool=="TestAlerts") ret=new TestAlerts;
 if (tool=="StopQuitFile") ret=new StopQuitFile;
+if (tool=="GracefulStop") ret=new GracefulStop;
+
 
 return ret;
 }

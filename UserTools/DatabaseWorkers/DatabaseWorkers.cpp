@@ -109,6 +109,16 @@ bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 	m_data->sc_vars.Add("CacheConfig", SlowControlElementType(COMMAND),[this](const char* control) -> std::string { return CacheConfigs(control); },
 	                    std::bind(&DatabaseWorkers::GetCachedConfigs, this, std::placeholders::_1),false,false); // lockable, hidden
 	
+	// DEBUG: add a button so we can query what devices have cached configs
+	m_data->sc_vars.Add("GetCachedDevices", SlowControlElementType(BUTTON),
+                            [this](const char*) -> std::string { return GetCachedDevices(""); },
+	                    nullptr,false,false); // read func, lockable, hidden
+	
+	// DEBUG: add a button so we can query the cached configuration for a device
+	m_data->sc_vars.Add("GetCachedDeviceConfig", SlowControlElementType(COMMAND),
+                            std::bind(&DatabaseWorkers::GetCachedDeviceConfig, this, std::placeholders::_1),
+                            nullptr,false,false); // read func, lockable, hidden
+	
 	last_exec = std::chrono::steady_clock::now();
 	
 	return true;
@@ -311,6 +321,21 @@ void DatabaseWorkers::DatabaseJobFail(void*& arg){
 	return;
 }
 
+std::string DatabaseWorkers::GetCachedDevices(const char*){
+	std::string devices;
+	for(std::pair<const std::string, std::string>& device_configs : m_data->cached_configs){
+		devices+=", "+device_configs.first;
+	}
+	//printf("GetCachedDevices returning: '%s'\n",devices.c_str());
+	return devices;
+}
+
+std::string DatabaseWorkers::GetCachedDeviceConfig(const char* arg){
+	std::string device = m_data->sc_vars.GetValue<std::string>(arg);
+	if(m_data->cached_configs.count(device)) return m_data->cached_configs[device];
+	return "No entry";
+}
+
 std::string DatabaseWorkers::GetCachedConfigs(const char* arg){
 	if(arg) std::cout<<"GetCacheConfigs call with argument "<<arg<<std::endl;
 	return ("{"+std::to_string(m_base_config_id)+","+std::to_string(m_runmode_config_id)+"}");
@@ -356,23 +381,41 @@ std::string DatabaseWorkers::CacheConfigs(const char* arg){
 		pqxx::work tx(conn);
 		std::map<std::string, std::string> cached_configs;
 		
+/*
+		// for normal base/runmode config entry format: {"mydev":X, "mydev2":Y ...}
 		std::string query = "WITH base AS ( SELECT data FROM base_config WHERE config_id=$1), "
 		                    "  runmode AS ( SELECT data FROM runmode_config WHERE config_id=$2), "
 		                    "   merged AS ( SELECT base.data || runmode.data AS data FROM base CROSS JOIN runmode), "
 		                    " expanded AS ( SELECT key AS device, value AS version FROM merged CROSS JOIN jsonb_each(merged.data) ) "
 		                    "SELECT f.device, json_build_object('version', f.version, 'data', dc.data, 'base_config_id', $1, 'runmode_config_id', $2 ) "
 		                    "FROM expanded f JOIN device_config dc ON f.device=dc.device AND (f.version)::int=dc.version";
+*/
+		// to accommodate James' base/runmode config entry format: [{"device":"mydev", "version":X}, {"device":"mydev2", "version":Y} ...]
+		std::string query = "WITH base AS ( SELECT data FROM base_config WHERE config_id=$1), "
+		                    "  runmode AS ( SELECT data FROM runmode_config WHERE config_id=$2), "
+		                    "   merged AS ( SELECT base.data || runmode.data AS data FROM base CROSS JOIN runmode), "
+		                    " expanded AS ( SELECT d->>'device' AS device, d->>'version' AS version from merged CROSS JOIN jsonb_array_elements(merged.data) as d ) "
+		                    "SELECT f.device, json_build_object('version', f.version, 'data', dc.data, 'base_config_id', $1, 'runmode_config_id', $2 ) FROM expanded f JOIN device_config dc ON f.device=dc.device AND (f.version)::int=dc.version";
 		for(auto [ device, json ] : tx.query<std::string_view, std::string_view>(query, pqxx::params(new_base_config_id, new_runmode_config_id))){
+			//printf("cacheing device '%s', config '%s'\n",std::string(device).c_str(),std::string(json).c_str());
 			cached_configs[std::string{device}]=json;
 		}
 		std::swap(cached_configs, m_data->cached_configs);
 		m_base_config_id = new_base_config_id;
 		m_runmode_config_id = new_runmode_config_id;
+		// FIXME for the time being we have a hack in TestAlerts that handles RunStart alert
+		// and it needs the config ids
+		m_data->vars.Set("base_config_id",m_base_config_id);
+		m_data->vars.Set("runmode_config_id",m_runmode_config_id);
 		
 	} catch (const pqxx::broken_connection &e){
 		// as usual the doxygen sucks, but it seems this doesn't provide
 		// any further methods to obtain information about the failure mode,
 		// so probably not useful to catch this explicitly.
+		std::cerr << e.what() << std::endl; // FIXME cerr -> Log
+		return e.what();
+	}
+	catch(std::exception& e){
 		std::cerr << e.what() << std::endl; // FIXME cerr -> Log
 		return e.what();
 	}

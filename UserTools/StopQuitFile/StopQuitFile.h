@@ -26,12 +26,15 @@ class StopQuitFile: public Tool {
   bool Execute(); ///< Execute function used to perform Tool purpose.
   bool Finalise(); ///< Finalise function used to clean up resources.
   bool LoadConfig(); ///< Initialise variables from configuration store.
+  bool SendCommand(std::string cmd);
   
   
   private:
   std::string stop_file;
   std::string quit_file;
   std::ifstream test;
+  bool stopped=false;
+  bool quitted=false;
   
 };
 

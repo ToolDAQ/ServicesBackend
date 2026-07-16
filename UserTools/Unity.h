@@ -15,3 +15,4 @@
 #include "ReadWorkers.h"
 #include "TestAlerts.h"
 #include "StopQuitFile.h"
+#include "GracefulStop.h"

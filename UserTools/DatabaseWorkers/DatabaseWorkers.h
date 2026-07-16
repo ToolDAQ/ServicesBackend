@@ -97,6 +97,8 @@ class DatabaseWorkers: public Tool {
 	bool CacheConfigs(const char* alertname, const char* payload); ///< alert to cache configs for upcoming config change
 	std::string CacheConfigs(const char* arg); ///< slowcontrol to cache configs for upcoming config change
 	std::string GetCachedConfigs(const char* arg=nullptr); ///< get cached config numbers
+	std::string GetCachedDevices(const char*);
+	std::string GetCachedDeviceConfig(const char*);
 	DatabaseJobDistributor_args thread_args;
 	DatabaseWorkerMonitoring monitoring_vars;
 	
