@@ -32,7 +32,7 @@ jobs:
       run: cd /opt/middleman_v2
        && ln -s /opt Dependencies
        && make clean
-       && make -j `nproc --all
+       && make -j `nproc --all`
     - name: test
       run: cd /opt/middleman_v2
        && source Setup.sh
