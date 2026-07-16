@@ -17,9 +17,8 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: setup
-      run: cp -R `pwd` /opt/ 
+      run: cp -R `pwd` /opt/middleman 
        && cd /opt 
-       && ls 
        && cd ToolFrameworkCore
        && make clean
        && git pull
@@ -29,8 +28,9 @@ jobs:
        && make clean
        && make -j `nproc --all`
     - name: make
-      run: cd /opt/middleman_v2
+      run: cd /opt/middleman
        && ln -s /opt Dependencies
+       && ls
        && source Setup.sh
        && make clean
        && make -j `nproc --all`
