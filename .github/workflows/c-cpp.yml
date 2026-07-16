@@ -31,6 +31,7 @@ jobs:
     - name: make
       run: cd /opt/middleman_v2
        && ln -s /opt Dependencies
+       && source Setup.sh
        && make clean
        && make -j `nproc --all`
     - name: test
