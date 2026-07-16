@@ -13,4 +13,6 @@ export SEGFAULT_SIGNALS="all"
 
 # PGHOST, PGPORT etc
 . ./SetupDB.sh
+# temporary, since pg_config needed by Makefile is in a non-standard location
+export PATH+=:/usr/pgsql-18/bin
 
