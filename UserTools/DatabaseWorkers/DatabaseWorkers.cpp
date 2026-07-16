@@ -107,7 +107,7 @@ bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 	// set a callback to cache configurations for upcoming run
 	m_data->sc_vars.AlertSubscribe("CacheConfig", [this](const char* alert, const char* payload) -> bool { return CacheConfigs(alert, payload); });
 	m_data->sc_vars.Add("CacheConfig", SlowControlElementType(COMMAND),[this](const char* control) -> std::string { return CacheConfigs(control); },
-	                    std::bind(&DatabaseWorkers::GetCachedConfigs, this, std::placeholders::_1),false,false); // lockable, hidden
+	                    std::bind(&DatabaseWorkers::GetCachedConfigs, this, std::placeholders::_1),false,true); // lockable, hidden
 	
 	// DEBUG: add a button so we can query what devices have cached configs
 	m_data->sc_vars.Add("GetCachedDevices", SlowControlElementType(BUTTON),
@@ -342,22 +342,22 @@ std::string DatabaseWorkers::GetCachedConfigs(const char* arg){
 }
 
 bool DatabaseWorkers::CacheConfigs(const char* alertname, const char* payload){
-	if(m_data->sc_vars[alertname]){
-		m_data->sc_vars[alertname]->SetValue(payload);
-		CacheConfigs(alertname);
-		// FIXME for now clear this after attempting because JSON in control values breaks the webpage
-		m_data->sc_vars[alertname]->SetValue("");
-	} else {
-		// shouldn't really ever happen. This function is only triggered by alerts of the correct name...
-		std::cerr<<"CacheConfigs alert with unexpected alert name '"<<alertname<<"'"<<std::endl;
-	}
-	return true;
+  if(m_data->sc_vars[alertname]){
+    m_data->sc_vars[alertname]->SetValue(payload);
+    //    CacheConfigs(alertname);
+    // FIXME for now clear this after attempting because JSON in control values breaks the webpage
+    //m_data->sc_vars[alertname]->SetValue("");
+  } else {
+    // shouldn't really ever happen. This function is only triggered by alerts of the correct name...
+    std::cerr<<"CacheConfigs alert with unexpected alert name '"<<alertname<<"'"<<std::endl;
+  }
+  return true;
 }
 
 std::string DatabaseWorkers::CacheConfigs(const char* arg){
-	
-	std::string payload = m_data->sc_vars.GetValue<std::string>(arg);
-	
+
+   //std::string payload = m_data->sc_vars.GetValue<std::string>(arg);
+   std::string payload =arg;
 	Store tmp;
 	tmp.JsonParser(payload);
 	int new_base_config_id;
