@@ -14,4 +14,3 @@ export SEGFAULT_SIGNALS="all"
 # PGHOST, PGPORT etc
 . ./SetupDB.sh
 
-export PATH+=:/usr/pgsql-18/bin
