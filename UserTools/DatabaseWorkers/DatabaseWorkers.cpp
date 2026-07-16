@@ -105,19 +105,22 @@ bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 	}
 	
 	// set a callback to cache configurations for upcoming run
-	m_data->sc_vars.AlertSubscribe("CacheConfig", [this](const char* alert, const char* payload) -> bool { return CacheConfigs(alert, payload); });
-	m_data->sc_vars.Add("CacheConfig", SlowControlElementType(COMMAND),[this](const char* control) -> std::string { return CacheConfigs(control); },
-	                    std::bind(&DatabaseWorkers::GetCachedConfigs, this, std::placeholders::_1),false,true); // lockable, hidden
+	m_data->sc_vars.AlertSubscribe("CacheConfig",
+	                               [this](const char* alert, const char* payload) -> bool { return CacheConfigs(alert, payload); });
+	m_data->sc_vars.Add("CacheConfig", SlowControlElementType(COMMAND),
+	                    [this](const char* control) -> std::string { return CacheConfigs(control); }, // use lambda because it's overloaded
+	                    std::bind(&DatabaseWorkers::GetCachedConfigs, this, std::placeholders::_1),
+	                    false,true); // lockable, hidden
 	
 	// DEBUG: add a button so we can query what devices have cached configs
 	m_data->sc_vars.Add("GetCachedDevices", SlowControlElementType(BUTTON),
-                            [this](const char*) -> std::string { return GetCachedDevices(""); },
+	                    [this](const char*) -> std::string { return GetCachedDevices(""); },
 	                    nullptr,false,false); // read func, lockable, hidden
 	
 	// DEBUG: add a button so we can query the cached configuration for a device
 	m_data->sc_vars.Add("GetCachedDeviceConfig", SlowControlElementType(COMMAND),
-                            std::bind(&DatabaseWorkers::GetCachedDeviceConfig, this, std::placeholders::_1),
-                            nullptr,false,false); // read func, lockable, hidden
+	                     std::bind(&DatabaseWorkers::GetCachedDeviceConfig, this, std::placeholders::_1),
+	                     nullptr,false,true); // read func, lockable, hidden FIXME make this unhidden when we support JSON values
 	
 	last_exec = std::chrono::steady_clock::now();
 	
@@ -330,8 +333,7 @@ std::string DatabaseWorkers::GetCachedDevices(const char*){
 	return devices;
 }
 
-std::string DatabaseWorkers::GetCachedDeviceConfig(const char* arg){
-	std::string device = m_data->sc_vars.GetValue<std::string>(arg);
+std::string DatabaseWorkers::GetCachedDeviceConfig(const char* device){
 	if(m_data->cached_configs.count(device)) return m_data->cached_configs[device];
 	return "No entry";
 }
@@ -342,22 +344,16 @@ std::string DatabaseWorkers::GetCachedConfigs(const char* arg){
 }
 
 bool DatabaseWorkers::CacheConfigs(const char* alertname, const char* payload){
-  if(m_data->sc_vars[alertname]){
-    m_data->sc_vars[alertname]->SetValue(payload);
-    //    CacheConfigs(alertname);
-    // FIXME for now clear this after attempting because JSON in control values breaks the webpage
-    //m_data->sc_vars[alertname]->SetValue("");
-  } else {
-    // shouldn't really ever happen. This function is only triggered by alerts of the correct name...
-    std::cerr<<"CacheConfigs alert with unexpected alert name '"<<alertname<<"'"<<std::endl;
-  }
-  return true;
+	if(m_data->sc_vars[alertname]){
+		m_data->sc_vars[alertname]->SetValue(payload);
+	} else {
+		// shouldn't really ever happen. This function is only triggered by alerts of the correct name...
+		std::cerr<<"CacheConfigs alert with unexpected alert name '"<<alertname<<"'"<<std::endl;
+	}
+	return true;
 }
 
-std::string DatabaseWorkers::CacheConfigs(const char* arg){
-
-   //std::string payload = m_data->sc_vars.GetValue<std::string>(arg);
-   std::string payload =arg;
+std::string DatabaseWorkers::CacheConfigs(const char* payload){
 	Store tmp;
 	tmp.JsonParser(payload);
 	int new_base_config_id;
