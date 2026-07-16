@@ -12,4 +12,5 @@ socketManager SocketManager configfiles/middleman/SocketManagerConfig
 monitoring Monitoring configfiles/middleman/MonitoringConfig
 sleep Sleep configfiles/middleman/SleepConfig
 testAlerts TestAlerts configfiles/middleman/TestAlertsConfig
-stopQuitFile StopQuitFile configfiles/middleman/StopQuitFileConfig
+#stopQuitFile StopQuitFile configfiles/middleman/StopQuitFileConfig
+gracefulStop GracefulStop configfiles/middleman/GracefulStopConfig

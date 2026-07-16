@@ -77,10 +77,21 @@ bool TestAlerts::AlertReceive(const char* alert_name, const char* alert_payload)
 	}
 	
 	// the middleman would not normally handle this, but in lieu of a broker, we do it here
+	if(strcmp(alert_name,"RunStart")==0){
+		std::string base_config_id;
+		std::string runmode_config_id;
+		m_data->vars.Get("base_config_id",base_config_id);
+		m_data->vars.Get("runmode_config_id",runmode_config_id);
+		static const std::string query = "insert into run_info ( start_time, base_config_id, runmode_config_id, testing, comments ) "
+                                                 "values ( 'now()', "+base_config_id+", "+runmode_config_id+", False, 'test run' )";
+		std::string response;
+		int ok = m_data->services->SQLQuery(query, response);
+	}
+	
 	if(strcmp(alert_name,"RunStop")==0){
 		static const std::string query = "update run_info set stop_time='now()' where run_number=( select max(run_number) from run_info )";
 		std::string response;
-		m_data->services->SQLQuery(query, response);
+		int ok = m_data->services->SQLQuery(query, response);
 	}
 	
 	return true;
