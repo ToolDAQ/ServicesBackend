@@ -1,33 +1,57 @@
-### Created by Dr. Benjamin Richards (b.richards@qmul.ac.uk)
+# server image
+FROM tooldaq/core
 
-### Download base image from cern repo on docker hub
-FROM cern/cc7-base:latest
-
-### Run the following commands as super user (root):
-USER root
-
-#######################
-### GCC ENVIRONMENT ###
-#######################
-
-RUN yum install -y \
-    git \
-    zlib-devel \
-    wget \
-    tar \
-    gcc-c++ \
-    make \
-    file \
-    bzip2-devel \
-    which \
-    dialog \
-    && yum clean all \
+RUN yum install -y       \
+    sudo                 \
+    procps-ng            \
+    psmisc               \
+    emacs                \
+    iputils              \
+    iproute              \
+    python3-psycopg2     \
+    && yum clean all     \
     && rm -rf /var/cache/yum
 
-    
-Run git clone https://github.com/ToolDAQ/ToolDAQApplication.git ; cd ToolDAQApplication ; ./GetToolDAQ.sh --ToolDAQ_ZMQ;
-Run cd ToolDAQApplication ; ./GetToolDAQ.sh --Boost;
-Run cd ToolDAQApplication ; ./GetToolDAQ.sh --Final;
+# rocky9 doesn't have sufficiently new postgres for current pg_partman
+# and we probably want a new one anyway
+RUN dnf --enablerepo=crb install -y \
+    perl-IPC-Run          \
+    redhat-rpm-config     \
+    https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm \
+    && dnf install -y     \
+    postgresql18-server   \
+    postgresql18-devel    \
+    libpq-devel           \
+    openssl-devel         \
+    libcurl-devel         \
+    mod_ssl               \
+    && dnf clean all
+# don't know why openssl-devel and libcurl-devel, which are dependencies of libpq, aren't pulled in by it
 
-### Open terminal
-CMD ["/bin/bash"]
+# FIXME remove pg-18 specialisation
+RUN cd /opt \
+    && export PKG_CONFIG_PATH=/usr/pgsql-18/lib/pkgconfig \
+    && wget https://github.com/jtv/libpqxx/archive/refs/tags/7.10.4.tar.gz \
+    && tar zxvf 7.10.4.tar.gz \
+    && rm 7.10.4.tar.gz \
+    && cd libpqxx-7.10.4 \
+    && mkdir install \
+    && ./configure --disable-documentation --enable-shared --prefix=/opt/libpqxx-7.10.4/install CXXFLAGS=-O3 \
+    && if [ ! -f /usr/bin/python ]; then ln -s /usr/bin/python3 /usr/bin/python; fi \
+    && make -j`nproc --all` \
+    && make install
+
+# FIXME remove pg-18 specialisation
+RUN cd /opt \
+    && export PKG_CONFIG_PATH=/usr/pgsql-18/lib/pkgconfig && export PATH+=:/usr/pgsql-18/bin \
+    && wget https://github.com/pgpartman/pg_partman/archive/refs/tags/v5.4.3.tar.gz \
+    && tar -zxf v5.4.3.tar.gz \
+    && rm v5.4.3.tar.gz \
+    && cd pg_partman-5.4.3 \
+    && make install
+
+# FIXME checkout a tag
+RUN cd /opt/ToolFrameworkCore && git pull && git checkout  && make clean && make -j$(nproc)
+RUN cd /opt/ToolDAQFramework && git pull && make clean && make -j$(nproc)
+
+#ENTRYPOINT ["/bin/bash"]
