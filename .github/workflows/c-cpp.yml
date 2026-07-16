@@ -29,10 +29,10 @@ jobs:
        && make clean
        && make -j `nproc --all`
     - name: make
-       run: cd /opt/middleman
-        && ln -s /opt Dependencies
-        && source Setup.sh
-        && make -j `nproc --all
+      run: cd /opt/middleman
+       && ln -s /opt Dependencies
+       && source Setup.sh
+       && make -j `nproc --all
     - name: test
       run: cd /opt/middleman
        && source Setup.sh
