@@ -334,16 +334,15 @@ echo "creating locations table"
 psql -ddaq -c "CREATE type tank_location as enum ('bottom', 'barrel', 'top');"
 psql -ddaq -c "CREATE TABLE locations (id int PRIMARY KEY, x real NOT NULL, y real NOT NULL, z real, type text NOT NULL, size real NOT NULL, location tank_location NOT NULL);"
 
-# upload PMT locations
-GEOFILE="${GEOFILE:-$(dirname "${BASH_SOURCE[0]}")/resources/geofile_HyperK.txt}"
-if [ -f "$GEOFILE" ]; then
+# upload PMT locations from the geometry CSV given in GEOFILE, if provided
+if [ -n "$GEOFILE" ] && [ -f "$GEOFILE" ]; then
   echo "seeding locations from $GEOFILE"
   tail -n +2 "$GEOFILE" \
     | tr -d '\r' \
     | sed 's/$/,,0/' \
     | psql -ddaq -c "\copy locations (id, y, z, x, location, type, size) from stdin with delimiter ','"
 else
-  echo "WARNING: geometry file not found at $GEOFILE - locations table left empty"
+  echo "locations table not seeded - set GEOFILE to a geometry CSV to seed automatically"
 fi
 
 echo "creating shift_check table"
