@@ -335,7 +335,7 @@ psql -ddaq -c "CREATE type tank_location as enum ('bottom', 'barrel', 'top');"
 psql -ddaq -c "CREATE TABLE locations (id int PRIMARY KEY, x real NOT NULL, y real NOT NULL, z real, type text NOT NULL, size real NOT NULL, location tank_location NOT NULL);"
 
 # upload PMT locations
-GEOFILE="$(dirname "${BASH_SOURCE[0]}")/resources/geofile_HyperK.txt"
+GEOFILE="${GEOFILE:-$(dirname "${BASH_SOURCE[0]}")/resources/geofile_HyperK.txt}"
 if [ -f "$GEOFILE" ]; then
   echo "seeding locations from $GEOFILE"
   tail -n +2 "$GEOFILE" \
