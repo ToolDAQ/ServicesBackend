@@ -25,7 +25,7 @@ echo "LD_LIBRARY_PATH+=:/usr/pgsql-18/lib" >> SetupDB.sh
 
 # only take action on first run
 if [ -f /.DBSetupDone ]; then
-	
+
 	# systemd version for baremetal
 	if [ ${USE_SYSTEMD} -eq 0 ]; then
 		# note no [ ] in following check
@@ -111,14 +111,14 @@ if [ ${USE_SYSTEMD} -eq 0 ]; then
 		Environment=PGDATA=${PGDATA}
 		EOF
 	fi
-	
+
 	# systemd version
 	sudo systemctl enable --now postgresql-18
 else
 	# container version
 	sudo mkdir -p /var/run/postgresql && sudo chown -R postgres /var/run/postgresql
 	sudo -u postgres $(which pg_ctl) start -D ${PGDATA} -s -o "-p 5432" -w -t 300
-	
+
 	#echo "registering database to start on boot"
 	#echo " sudo -u postgres $(which pg_ctl) start -D ${PGDATA} -s -o \"-p 5432\" -w -t 300;" >> /etc/rc.local
 fi
@@ -161,7 +161,7 @@ echo "creating index on base_config table"
 psql -ddaq -c "CREATE UNIQUE INDEX ON base_config (name, version DESC NULLS LAST)"
 
 echo "creating autoincrement function for base_config version"
-psql -ddaq -c 'CREATE OR REPLACE FUNCTION "fn_base_config_ver"() returns "pg_catalog"."trigger" as $BODY$ begin new.version = (select COALESCE(MAX(version)+1,0) from base_config where name=new.name); return NEW; end; $BODY$ LANGUAGE plpgsql VOLATILE COST 100;'
+psql -ddaq -c 'CREATE OR REPLACE FUNCTION "fn_base_config_ver"() returns "pg_catalog"."trigger" as $BODY$ begin new.version = (select COALESCE(MAX(version)+1,1) from base_config where name=new.name); return NEW; end; $BODY$ LANGUAGE plpgsql VOLATILE COST 100;'
 psql -ddaq -c 'CREATE TRIGGER trig_base_config_ver BEFORE insert ON base_config FOR EACH ROW EXECUTE PROCEDURE fn_base_config_ver();'
 
 echo "creating runmode_config table"
@@ -173,7 +173,7 @@ echo "creating index on runmode_config table"
 psql -ddaq -c "CREATE UNIQUE INDEX ON runmode_config (name, version DESC NULLS LAST)"
 
 echo "creating autoincrement function for runmode_config version"
-psql -ddaq -c 'CREATE OR REPLACE FUNCTION "fn_runmode_config_ver"() returns "pg_catalog"."trigger" as $BODY$ begin new.version = (select COALESCE(MAX(version)+1,0) from runmode_config where name=new.name); return NEW; end; $BODY$ LANGUAGE plpgsql VOLATILE COST 100;'
+psql -ddaq -c 'CREATE OR REPLACE FUNCTION "fn_runmode_config_ver"() returns "pg_catalog"."trigger" as $BODY$ begin new.version = (select COALESCE(MAX(version)+1,1) from runmode_config where name=new.name); return NEW; end; $BODY$ LANGUAGE plpgsql VOLATILE COST 100;'
 psql -ddaq -c 'CREATE TRIGGER trig_runmode_config_ver BEFORE insert ON runmode_config FOR EACH ROW EXECUTE PROCEDURE fn_runmode_config_ver();'
 
 echo "creating run_info table"
@@ -197,7 +197,7 @@ echo "creating index on device_config table"
 psql -ddaq -c "CREATE UNIQUE INDEX ON device_config (device, version DESC NULLS LAST)"
 
 echo "creating autoincrement function for device_config version"
-psql -ddaq -c 'CREATE OR REPLACE FUNCTION "fn_devconfig_ver"() returns "pg_catalog"."trigger" as $BODY$ begin new.version = (select COALESCE(MAX(version)+1,0) from device_config where device=new.device); return NEW; end; $BODY$ LANGUAGE plpgsql VOLATILE COST 100;'
+psql -ddaq -c 'CREATE OR REPLACE FUNCTION "fn_devconfig_ver"() returns "pg_catalog"."trigger" as $BODY$ begin new.version = (select COALESCE(MAX(version)+1,1) from device_config where device=new.device); return NEW; end; $BODY$ LANGUAGE plpgsql VOLATILE COST 100;'
 psql -ddaq -c 'CREATE TRIGGER trig_devconfig_ver BEFORE insert ON device_config FOR EACH ROW EXECUTE PROCEDURE fn_devconfig_ver();'
 
 echo "creating calibration table"
@@ -208,7 +208,7 @@ echo "creating index on calibration table"
 psql -ddaq -c "CREATE UNIQUE INDEX ON calibration (name, version DESC NULLS LAST)"
 
 echo "creating autoincrement function for calibration version"
-psql -ddaq -c 'CREATE OR REPLACE FUNCTION "fn_calibration_ver"() returns "pg_catalog"."trigger" as $BODY$ begin new.version = (select COALESCE(MAX(version)+1,0) from calibration where name=new.name); return NEW; end; $BODY$ LANGUAGE plpgsql VOLATILE COST 100;'
+psql -ddaq -c 'CREATE OR REPLACE FUNCTION "fn_calibration_ver"() returns "pg_catalog"."trigger" as $BODY$ begin new.version = (select COALESCE(MAX(version)+1,1) from calibration where name=new.name); return NEW; end; $BODY$ LANGUAGE plpgsql VOLATILE COST 100;'
 psql -ddaq -c 'CREATE TRIGGER trig_calibration_ver BEFORE insert ON calibration FOR EACH ROW EXECUTE PROCEDURE fn_calibration_ver();'
 
 echo "creating logging table"
@@ -303,7 +303,7 @@ psql -ddaq -c "CREATE TABLE plotlyplots (time timestamp with time zone NOT NULL 
 psql -ddaq -c "CREATE UNIQUE INDEX ON plotlyplots (name, version DESC NULLS LAST)"
 
 echo "creating autoincrement function for plotlyplots version"
-psql -ddaq -c 'CREATE OR REPLACE FUNCTION "fn_plotlyplot_ver"() returns "pg_catalog"."trigger" as $BODY$ begin new.version = (select COALESCE(MAX(version)+1,0) from plotlyplots where name=new.name); return NEW; end; $BODY$ LANGUAGE plpgsql VOLATILE COST 100;'
+psql -ddaq -c 'CREATE OR REPLACE FUNCTION "fn_plotlyplot_ver"() returns "pg_catalog"."trigger" as $BODY$ begin new.version = (select COALESCE(MAX(version)+1,1) from plotlyplots where name=new.name); return NEW; end; $BODY$ LANGUAGE plpgsql VOLATILE COST 100;'
 psql -ddaq -c 'CREATE TRIGGER trig_plotlyplot_ver BEFORE insert ON plotlyplots FOR EACH ROW EXECUTE PROCEDURE fn_plotlyplot_ver();'
 
 echo "creating event_display table"
