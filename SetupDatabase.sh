@@ -59,6 +59,7 @@ select result in OK Change Cancel; do
 			if [ $? -ne 0 ]; then
 				exit 0;
 			fi
+			export PGDATA=${PGROOT}/data
 			# this cannot be the correct way to do this...
 			echo -e "Initialising postgresql cluster at location ${PGROOT}. Is this OK?\n1) OK\n2) Change\n3) Cancel"
 			;;
@@ -161,7 +162,7 @@ echo "creating index on base_config table"
 psql -ddaq -c "CREATE UNIQUE INDEX ON base_config (name, version DESC NULLS LAST)"
 
 echo "creating autoincrement function for base_config version"
-psql -ddaq -c 'CREATE OR REPLACE FUNCTION "fn_base_config_ver"() returns "pg_catalog"."trigger" as $BODY$ begin new.version = (select COALESCE(MAX(version)+1,0) from base_config where name=new.name); return NEW; end; $BODY$ LANGUAGE plpgsql VOLATILE COST 100;'
+psql -ddaq -c 'CREATE OR REPLACE FUNCTION "fn_base_config_ver"() returns "pg_catalog"."trigger" as $BODY$ begin new.version = (select COALESCE(MAX(version)+1,1) from base_config where name=new.name); return NEW; end; $BODY$ LANGUAGE plpgsql VOLATILE COST 100;'
 psql -ddaq -c 'CREATE TRIGGER trig_base_config_ver BEFORE insert ON base_config FOR EACH ROW EXECUTE PROCEDURE fn_base_config_ver();'
 
 echo "creating runmode_config table"
@@ -173,7 +174,7 @@ echo "creating index on runmode_config table"
 psql -ddaq -c "CREATE UNIQUE INDEX ON runmode_config (name, version DESC NULLS LAST)"
 
 echo "creating autoincrement function for runmode_config version"
-psql -ddaq -c 'CREATE OR REPLACE FUNCTION "fn_runmode_config_ver"() returns "pg_catalog"."trigger" as $BODY$ begin new.version = (select COALESCE(MAX(version)+1,0) from runmode_config where name=new.name); return NEW; end; $BODY$ LANGUAGE plpgsql VOLATILE COST 100;'
+psql -ddaq -c 'CREATE OR REPLACE FUNCTION "fn_runmode_config_ver"() returns "pg_catalog"."trigger" as $BODY$ begin new.version = (select COALESCE(MAX(version)+1,1) from runmode_config where name=new.name); return NEW; end; $BODY$ LANGUAGE plpgsql VOLATILE COST 100;'
 psql -ddaq -c 'CREATE TRIGGER trig_runmode_config_ver BEFORE insert ON runmode_config FOR EACH ROW EXECUTE PROCEDURE fn_runmode_config_ver();'
 
 echo "creating run_info table"
@@ -190,8 +191,8 @@ psql -ddaq -c "CREATE UNIQUE INDEX dev_name_idx ON devices(LOWER(name));"
 
 echo "creating device_config table"
 # XXX IMPORTANT: VERSION 0 OF ALL DEVICE CONFIGURATIONS SHOULD BE DEVICE OFF
-#psql -ddaq -c "CREATE TABLE device_config (id serial PRIMARY KEY, time timestamp with time zone NOT NULL DEFAULT now(), device text references devices(name), version int NOT NULL, author int NOT NULL references users(user_id), description text NOT NULL, data json NOT NULL);"
-psql -ddaq -c "CREATE TABLE device_config (id serial PRIMARY KEY, time timestamp with time zone NOT NULL DEFAULT now(), device text references devices(name), version int NOT NULL, author text NOT NULL, description text NOT NULL, data json NOT NULL);"
+#psql -ddaq -c "CREATE TABLE device_config (id serial PRIMARY KEY, time timestamp with time zone NOT NULL DEFAULT now(), device text references devices(name), version int NOT NULL, author int NOT NULL references users(user_id), description text NOT NULL, data json NOT NULL, retired_time TIMESTAMP WITH TIME ZONE DEFAULT NULL, retired_user_id INTEGER DEFAULT NULL, retired BOOLEAN NOT NULL DEFAULT FALSE);"
+psql -ddaq -c "CREATE TABLE device_config (id serial PRIMARY KEY, time timestamp with time zone NOT NULL DEFAULT now(), device text references devices(name), version int NOT NULL, author text NOT NULL, description text NOT NULL, data json NOT NULL, retired_time TIMESTAMP WITH TIME ZONE DEFAULT NULL, retired_user_id INTEGER DEFAULT NULL, retired BOOLEAN NOT NULL DEFAULT FALSE);"
 
 echo "creating index on device_config table"
 psql -ddaq -c "CREATE UNIQUE INDEX ON device_config (device, version DESC NULLS LAST)"
@@ -361,6 +362,22 @@ psql -ddaq -c "CREATE OR REPLACE FUNCTION public.UsernameFromUserId(p_user_id IN
 echo "Create RetireAllBaseConfigurations function"
 psql -ddaq -c "CREATE OR REPLACE FUNCTION public.RetireAllBaseConfigurations() RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER SET search_path TO 'public' AS \$function$ UPDATE base_config SET retired = TRUE; SELECT TRUE \$function$"
 
+echo "Create RetireDeviceConfigurationCascading function"
+psql -ddaq -c "CREATE OR REPLACE FUNCTION public.RetireDeviceConfigurationCascading(p_device_name TEXT, p_version_num INTEGER) RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER SET search_path TO 'public' AS \$function$ \
+UPDATE base_config SET retired = TRUE WHERE data ? p_device_name AND (data->p_device_name)::integer=p_version_num; \
+UPDATE runmode_config SET retired = TRUE WHERE data ? p_device_name AND (data->p_device_name)::integer=p_version_num; \
+UPDATE device_config SET retired = TRUE WHERE device=p_device_name AND version=p_version_num; \
+SELECT TRUE \
+\$function$"
+
+echo "Create RetireManyDeviceConfigurationsCascading function"
+psql -ddaq -c "CREATE OR REPLACE FUNCTION public.RetireManyDeviceConfigurationsCascading(p_device_name TEXT, p_version_num INTEGER) RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER SET search_path TO 'public' AS \$function$ \
+UPDATE base_config SET retired = TRUE WHERE data ? p_device_name AND (data->p_device_name)::integer<p_version_num; \
+UPDATE runmode_config SET retired = TRUE WHERE data ? p_device_name AND (data->p_device_name)::integer<p_version_num; \
+UPDATE device_config SET retired = TRUE WHERE device=p_device_name AND version<p_version_num; \
+SELECT TRUE \
+\$function$"
+
 # add a database role for the webserver
 echo "adding webserver database role"
 psql -ddaq -c "CREATE ROLE webserver LOGIN"
@@ -386,13 +403,12 @@ psql -ddaq -c "GRANT EXECUTE ON FUNCTION public.RetireAllBaseConfigurations() TO
 echo "Inserting a default user"
 psql -ddaq -c "INSERT INTO users (username, password_hash) VALUES ('dev_user', 'c20cc404fe15337ce6d8a5b782576d9a21de03f8707065c8ccf7abb1cc939801');"
 
-echo "Inserting example device"
-psql -ddaq -c "INSERT INTO devices (name, author_id) VALUES ('test_device', (select user_id from users where username='dev_user'));"
-
 echo "Inserting example monitoring data"
 psql -ddaq -c "INSERT INTO monitoring (time, device, subject, data) SELECT now() - (i * INTERVAL '1 minute') AS time, 'test_device' AS device, 'general' AS subject, json_build_object( 'temperature', round((random() * 50 + 10)::numeric, 2), 'humidity', round((random() * 100)::numeric, 2)) AS data FROM generate_series(1, 100) i;"
 
 echo "Inserting example plotyplot data"
 psql -ddaq -c "INSERT INTO plotlyplots (name, time, version, data, layout) VALUES ('plotly1', 'now()', 1, '[{\"x\": [1, 2, 3, 4, 5], \"y\": [10, 20, 15, 30, 25], \"type\": \"scatter\"}]', '{\"title\": \"plotly1\"}');"
 
+echo "Inserting dummy runmode configuration"
+psql -ddaq -c "INSERT INTO runmode_config ( name, description, author, data ) VALUES ( 'dummy', 'empty runmode', 'dev_user', '{}' );"
 touch /.DBSetupDone

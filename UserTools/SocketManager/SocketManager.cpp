@@ -39,6 +39,8 @@ bool SocketManager::Initialise(std::string configfile, DataModel &data){
 	m_data->num_threads++;
 	
 	m_data->sc_vars.Add("Clients", SlowControlElementType::INFO, nullptr, nullptr); // INFO type doesnt need read fnct
+	m_data->sc_vars.Add("ClearClients", SlowControlElementType::BUTTON,
+	                    std::bind(&SocketManager::ClearClients, this, std::placeholders::_1), nullptr);
 	
 	return true;
 }
@@ -104,35 +106,49 @@ void SocketManager::Thread(Thread_args* args){
 			
 			// update the list of clients so they can be queried
 			for(std::pair<const std::string, Store*>& aservice : sock->connections){
+				
 				std::string client_name = aservice.second->Get<std::string>("msg_value");
-				if(!m_args->clientsmap.count(aservice.first)){
-					//printf("mm adding new %s client with address %s, service '%s'\n",sock->remote_port_name.c_str(),aservice.first.c_str(),client_name.c_str());
-					m_args->clientsmap.emplace(aservice.first, client_name);
+				std::string client_ip = aservice.second->Get<std::string>("ip");
+				std::string client_port = aservice.second->Get<std::string>(sock->remote_port_name);
+				std::string client_uuid = aservice.second->Get<std::string>("uuid");
+				//printf("%s connection to client application '%s' with uuid '%s' at ip '%s' on port '%s'\n",
+				//       sock->remote_port_name.c_str(), client_name.c_str(), client_uuid.c_str(),
+				//       client_ip.c_str(), client_port.c_str());
+				
+				// we want to group by application
+				// a given application will have a single client_name, IP and UUID, so bundle these
+				std::string client_key = client_name+"["+client_uuid+"]@"+client_ip;
+				
+				// an application may have multiple connection types on different ports
+				std::string client_conn = sock->remote_port_name+" ("+client_port+")";
+
+				if(!m_args->clientsmap.count(client_key)){
+					//printf("mm adding new %s client: '%s' with connection '%s'\n",sock->remote_port_name.c_str(),client_key.c_str(), client_conn.c_str());
+					m_args->clientsmap.emplace(client_key, client_conn);
 				} else {
-					//printf("mm updating %s client with address %s, adding service '%s'\n",sock->remote_port_name.c_str(),aservice.first.c_str(),client_name.c_str());
-					m_args->clientsmap.at(aservice.first)+= ", "+client_name;
+					//printf("mm updating %s client '%s', adding connection '%s'\n",sock->remote_port_name.c_str(),client_key.c_str(),client_conn.c_str());
+					m_args->clientsmap.at(client_key)+= ", "+client_conn;
 				}
 			}
 			
 		}
 		
 	}
-	container_locker.unlock();
 	
 	if(new_clients){
 		
 		std::string clientlist;
 		for(std::pair<const std::string,std::string>& aclient : m_args->clientsmap){
-			if(!clientlist.empty()) clientlist+="\n";
+			if(!clientlist.empty()) clientlist+="\r\n";
 			clientlist += aclient.first+": "+aclient.second;
 		}
 		if(clientlist.size()>0){
-			// if client list is non-empty, remove trailing newline and set as slow control indicator
-			clientlist.pop_back();
+			// if client list is non-empty set as slow control indicator
 			m_args->m_data->sc_vars["Clients"]->SetValue(clientlist);
 		}
 		
 	}
+	container_locker.unlock();
 	
 	//std::this_thread::sleep_until(m_args->last_update+m_args->update_period_ms);
 	std::unique_lock<std::timed_mutex> timed_locker(*m_args->thread_mtx, std::defer_lock);
@@ -142,4 +158,19 @@ void SocketManager::Thread(Thread_args* args){
 	
 }
 
-
+std::string SocketManager::ClearClients(const char*){
+	// not sure if a good idea, but clear the set of connections to re-invoke 'connect' in UpdateConnections
+	std::unique_lock<std::mutex> container_locker(m_data->managed_sockets_mtx);
+	for(std::pair<const std::string&, ManagedSocket*> mgd_sock : m_data->managed_sockets){
+		ManagedSocket* sock = mgd_sock.second;
+		std::unique_lock<std::mutex> locker(sock->socket_mtx, std::defer_lock);
+		if(!locker.try_lock()){
+			sock->socket_manager_request=true;
+			locker.lock();
+			sock->socket_manager_request=false;
+		}
+		sock->connections.clear();
+	}
+	thread_args.clientsmap.clear();
+	return "clients cleared";
+}
