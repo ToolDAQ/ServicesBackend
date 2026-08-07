@@ -108,7 +108,7 @@ bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 	m_data->sc_vars.AlertSubscribe("CacheConfig",
 	                               [this](const char* alert, const char* payload) -> bool { return CacheConfigs(alert, payload); });
 	m_data->sc_vars.Add("CacheConfig", SlowControlElementType(COMMAND),
-	                    [this](const char* control) -> std::string { return CacheConfigs(control); }, // use lambda because it's overloaded
+	                    [this](const char* payload) -> std::string { return CacheConfigs(payload); }, // use lambda because it's overloaded
 	                    std::bind(&DatabaseWorkers::GetCachedConfigs, this, std::placeholders::_1),
 	                    false,true); // lockable, hidden
 	
