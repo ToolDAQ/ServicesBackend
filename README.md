@@ -1,21 +1,39 @@
-# DAQFramework
+*****************
+# Middleman
+*****************
+The Middleman is an application for managing efficient insertions and retreival from a relational database (currently postgresql) used as part of the [ToolDAQFramework](https://github.com/ToolDAQ/ToolDAQFramework) applications.
+The SetupDatabase.sh script defines the schema used, with tables for storing device and detector configurations, logging and monitoring messages, alarms, detector information, and various other information required by a data taking system.
 
-ToolDAQ Application is an open source general DAQ Application template built using the modular ToolDAQ Framework core[1] to give separation between core and implementation code.
+*****************
+# What it does
+*****************
+The middleman defines a ToolChain with separate tools for:
+* receiving logging and monitoring data over multicast
+* receiving database queries over ZMQ sockets
+* combining and batching queries to improve insertion performance
+* parsing configurations and relaying them to devices
+* monitor and log system status
 
-****************************
-#Concept
-****************************
+All Tools make extensive use of parallelisation utilities provided within ToolDAQFramework to support high loads.
 
-The main executable creates a ToolChain which is an object that holds Tools. Tools are added to the ToolChain and then the ToolChain can be told to Initialise Execute and Finalise each tool in the chain.
+*****************
+# Who needs it
+*****************
+Applications developed using ToolDAQFramework that wish to use an external RDB for the above purposes may use the middleman in combination with features within the Services class, however it is not a required part of ToolDAQFramework, nor the only way to achieve this.
+Many functions in the [libDAQInterface](https://github.com/ToolDAQ/libDAQInterface/) library for communicating with ToolDAQFramework applications actually communicate with an associated instance of the Middleman, so developers using this library are likely to need an instance.
 
-The ToolChain also holds a uesr defined DataModel which each tool has access too and can read ,update and modify. This is the method by which data is passed between Tools.
+*****************
+# How do I run it?
+*****************
+The application can be run in a [Docker container](https://hub.docker.com/r/tooldaq/mm_db) as follows:
+```
+docker run --name=Middleman --net=host -dt tooldaq/mm_db
+```
+It can then be controlled via the ToolDAQ RemoteControl application, or the [ToolDAQ WebServer](github.com/ToolDAQ/webserver).
 
-User Tools can be generated for use in the tool chain by incuding a Tool header. This can be done manually or by use of the newTool.sh script.
+*****************
+# For those from Hyper-Kamiokande
+*****************
+The middleman is one of the services run by the Docker compose system provided by the Hyper-Kamiokande fork of the ToolDAQ WebServer, and it is strongly recommended to run it this way. A complete guide on how to do this is provided on the [FD5 TWiki page](https://wiki.hyperk.org/do/view/HyperK/WorkingGroupFD5) under the section 'DAQ/Electronics Interface Testing Containers'. 
 
-For more information consult the ToolDAQ doc.pdf
 
-https://github.com/ToolDAQ/ToolDAQFramework/blob/master/ToolDAQ%20doc.pdf
-
-Copyright (c) 2016 Benjamin Richards
-
-[1] Benajmin Richards. (2018, November 11). ToolDAQ Framework v2.1.1 (Version V2.1.1). Zenodo. http://doi.org/10.5281/zenodo.1482767 
