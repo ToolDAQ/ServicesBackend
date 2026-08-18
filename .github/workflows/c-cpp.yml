@@ -35,7 +35,7 @@ jobs:
        && make clean
        && make -j `nproc --all`
     - name: test
-      run: cd /opt/middleman_v2
+      run: cd /opt/middleman
        && source ./Setup.sh
        && ./main configfiles/Dummy/ToolChainConfig
 
