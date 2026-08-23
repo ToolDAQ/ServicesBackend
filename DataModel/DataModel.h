@@ -4,6 +4,7 @@
 #include <vector>
 #include <atomic>
 #include <mutex>
+#include <shared_mutex>
 
 #include "DAQDataModelBase.h"
 #include "Pool.h"
@@ -43,7 +44,7 @@ class DataModel : public DAQDataModelBase {
 	// Tools can add connections to this and the SocketManager
 	// will periodically invoke UpdateConnections to connect clients
 	std::map<std::string, ManagedSocket*> managed_sockets;
-	std::mutex managed_sockets_mtx;
+	std::shared_mutex managed_sockets_mtx;
 	
 	// when a new config is loaded, we pre-fetch it so that we don't need to
 	// go back to the database for every device

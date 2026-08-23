@@ -29,6 +29,7 @@ bool SocketManager::Initialise(std::string configfile, DataModel &data){
 	thread_args.daq_utils = &daq_utils;
 	thread_args.update_period_ms = std::chrono::milliseconds{update_ms};
 	thread_args.last_update = std::chrono::steady_clock::now();
+	thread_args.new_clients = &new_clients;
 	thread_mtx.lock();
 	thread_args.thread_mtx = &thread_mtx;
 	
@@ -53,6 +54,67 @@ bool SocketManager::Execute(){
 		Finalise();
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		++(monitoring_vars.thread_crashes);
+	}
+	
+	auto time_now = std::chrono::steady_clock::now();
+	auto time_since_last = time_now - last_exec;
+	if(time_since_last < std::chrono::milliseconds(1000)) return true;
+	last_exec = time_now;
+	
+	// updating monitoring slow control of connected clients
+	if(new_clients){
+		// need to rebuild the list of clients
+		new_clients=false;
+		clientsmap.clear();
+		bool first=true;
+		std::map<std::string, std::string>::iterator it;
+		
+		std::shared_lock<std::shared_mutex> container_locker(m_data->managed_sockets_mtx);
+		for(std::pair<const std::string&, ManagedSocket*> mgd_sock : m_data->managed_sockets){
+			
+			ManagedSocket* sock = mgd_sock.second;
+			std::unique_lock<std::mutex> locker2(sock->connections_mtx);
+			
+			for(std::pair<const std::string, Store*>& aservice : sock->connections){
+				
+				std::string client_name = aservice.second->Get<std::string>("msg_value");
+				std::string client_ip = aservice.second->Get<std::string>("ip");
+				std::string client_port = aservice.second->Get<std::string>(sock->remote_port_name);
+				std::string client_uuid = aservice.second->Get<std::string>("uuid");
+				//printf("%s connection to client application '%s' with uuid '%s' at ip '%s' on port '%s'\n",
+				//       sock->remote_port_name.c_str(), client_name.c_str(), client_uuid.c_str(),
+				//       client_ip.c_str(), client_port.c_str());
+				
+				// we want to group by application
+				// a given application will have a single client_name, IP and UUID, so bundle these
+				std::string client_key = client_name+"["+client_uuid+"]@"+client_ip;
+				
+				// an application may have multiple connection types on different ports
+				std::string client_conn = sock->remote_port_name+" ("+client_port+")";
+				if(!first) it = clientsmap.find(client_key);
+				if(first || it==clientsmap.end()){
+					//printf("mm adding new %s client: '%s' with connection '%s'\n",sock->remote_port_name.c_str(),client_key.c_str(), client_conn.c_str());
+					clientsmap.emplace(client_key, client_conn);
+				} else {
+					//printf("mm updating %s client '%s', adding connection '%s'\n",sock->remote_port_name.c_str(),client_key.c_str(),client_conn.c_str());
+					it->second += "; "+client_conn; // FIXME , gets replaced by . on web, for now...
+				}
+			}
+			first=false;
+			
+		}
+		
+		std::string clientlist;
+		for(std::pair<const std::string,std::string>& aclient : clientsmap){
+			if(!clientlist.empty()) clientlist+="\n";
+			clientlist += aclient.first+": "+aclient.second;
+		}
+		if(clientlist.size()>0){
+			// if client list is non-empty set as slow control indicator
+			m_data->sc_vars["Clients"]->SetValue(clientlist);
+			std::string recheck = m_data->sc_vars["Clients"]->GetValue<std::string>();
+		}
+		
 	}
 	
 	return true;
@@ -82,9 +144,7 @@ void SocketManager::Thread(Thread_args* args){
 	//printf("SocketManager checking for new clients after %lu ms\n",std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-m_args->last_update).count());
 	m_args->last_update = std::chrono::steady_clock::now();
 	
-	bool new_clients=false;
-	
-	std::unique_lock<std::mutex> container_locker(m_args->m_data->managed_sockets_mtx);
+	std::shared_lock<std::shared_mutex> container_locker(m_args->m_data->managed_sockets_mtx);
 	for(std::pair<const std::string&, ManagedSocket*> mgd_sock : m_args->m_data->managed_sockets){
 		
 		ManagedSocket* sock = mgd_sock.second;
@@ -95,6 +155,7 @@ void SocketManager::Thread(Thread_args* args){
 			locker.lock();
 			sock->socket_manager_request=false;
 		}
+		std::unique_lock<std::mutex> locker2(sock->connections_mtx);
 		
 		int new_conn_count = std::abs((long long int)sock->connections.size() - m_args->daq_utils->UpdateConnections(sock->service_name, sock->socket, sock->connections, "", sock->remote_port_name));
 		locker.unlock();
@@ -102,49 +163,7 @@ void SocketManager::Thread(Thread_args* args){
 		if(new_conn_count!=0){
 			//m_args->m_data->services->SendLog(std::to_string(std::abs(new_conn_count))+" new connections to "+sock->service_name, v_message); // FIXME logging
 			//printf("mm %d new %s connections made!\n",new_conn_count, sock->remote_port_name.c_str());
-			new_clients = true;
-			
-			// update the list of clients so they can be queried
-			for(std::pair<const std::string, Store*>& aservice : sock->connections){
-				
-				std::string client_name = aservice.second->Get<std::string>("msg_value");
-				std::string client_ip = aservice.second->Get<std::string>("ip");
-				std::string client_port = aservice.second->Get<std::string>(sock->remote_port_name);
-				std::string client_uuid = aservice.second->Get<std::string>("uuid");
-				//printf("%s connection to client application '%s' with uuid '%s' at ip '%s' on port '%s'\n",
-				//       sock->remote_port_name.c_str(), client_name.c_str(), client_uuid.c_str(),
-				//       client_ip.c_str(), client_port.c_str());
-				
-				// we want to group by application
-				// a given application will have a single client_name, IP and UUID, so bundle these
-				std::string client_key = client_name+"["+client_uuid+"]@"+client_ip;
-				
-				// an application may have multiple connection types on different ports
-				std::string client_conn = sock->remote_port_name+" ("+client_port+")";
-
-				if(!m_args->clientsmap.count(client_key)){
-					//printf("mm adding new %s client: '%s' with connection '%s'\n",sock->remote_port_name.c_str(),client_key.c_str(), client_conn.c_str());
-					m_args->clientsmap.emplace(client_key, client_conn);
-				} else {
-					//printf("mm updating %s client '%s', adding connection '%s'\n",sock->remote_port_name.c_str(),client_key.c_str(),client_conn.c_str());
-					m_args->clientsmap.at(client_key)+= ", "+client_conn;
-				}
-			}
-			
-		}
-		
-	}
-	
-	if(new_clients){
-		
-		std::string clientlist;
-		for(std::pair<const std::string,std::string>& aclient : m_args->clientsmap){
-			if(!clientlist.empty()) clientlist+="\r\n";
-			clientlist += aclient.first+": "+aclient.second;
-		}
-		if(clientlist.size()>0){
-			// if client list is non-empty set as slow control indicator
-			m_args->m_data->sc_vars["Clients"]->SetValue(clientlist);
+			*m_args->new_clients = true;
 		}
 		
 	}
@@ -160,17 +179,12 @@ void SocketManager::Thread(Thread_args* args){
 
 std::string SocketManager::ClearClients(const char*){
 	// not sure if a good idea, but clear the set of connections to re-invoke 'connect' in UpdateConnections
-	std::unique_lock<std::mutex> container_locker(m_data->managed_sockets_mtx);
+	std::shared_lock<std::shared_mutex> container_locker(m_data->managed_sockets_mtx);
 	for(std::pair<const std::string&, ManagedSocket*> mgd_sock : m_data->managed_sockets){
 		ManagedSocket* sock = mgd_sock.second;
-		std::unique_lock<std::mutex> locker(sock->socket_mtx, std::defer_lock);
-		if(!locker.try_lock()){
-			sock->socket_manager_request=true;
-			locker.lock();
-			sock->socket_manager_request=false;
-		}
+		std::unique_lock<std::mutex> locker2(sock->connections_mtx);
 		sock->connections.clear();
 	}
-	thread_args.clientsmap.clear();
+	clientsmap.clear();
 	return "clients cleared";
 }

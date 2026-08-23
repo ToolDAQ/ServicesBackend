@@ -68,7 +68,7 @@ bool ReadQueryReceiverReplySender::Initialise(std::string configfile, DataModel 
 	*/
 	
 	// add the socket to the datamodel for the SocketManager, which will handle making new connections to clients
-	std::unique_lock<std::mutex> locker(m_data->managed_sockets_mtx);
+	std::unique_lock<std::shared_mutex> locker(m_data->managed_sockets_mtx);
 	m_data->managed_sockets[remote_port_name] = managed_socket;
 	
 	/* ----------------------------------------- */
@@ -76,7 +76,7 @@ bool ReadQueryReceiverReplySender::Initialise(std::string configfile, DataModel 
 	/* ----------------------------------------- */
 	
 	// monitoring struct to encapsulate tracking info
-	locker =std::unique_lock<std::mutex>(m_data->monitoring_variables_mtx);
+	std::unique_lock<std::mutex> locker2(m_data->monitoring_variables_mtx);
 	m_data->monitoring_variables.emplace(m_tool_name, &monitoring_vars);
 	
 	thread_args.m_data = m_data;
@@ -127,7 +127,7 @@ bool ReadQueryReceiverReplySender::Finalise(){
 	Log("thread terminated",v_warning);
 	m_data->num_threads--;
 	
-	std::unique_lock<std::mutex> locker(m_data->managed_sockets_mtx);
+	std::unique_lock<std::shared_mutex> locker(m_data->managed_sockets_mtx);
 	if(m_data->managed_sockets.count(remote_port_name)){
 		ManagedSocket* sock = m_data->managed_sockets[remote_port_name];
 		m_data->managed_sockets.erase(remote_port_name);
@@ -136,7 +136,7 @@ bool ReadQueryReceiverReplySender::Finalise(){
 		delete sock;
 	}
 	
-	locker = std::unique_lock<std::mutex>(m_data->monitoring_variables_mtx);
+	std::unique_lock<std::mutex> locker2(m_data->monitoring_variables_mtx);
 	m_data->monitoring_variables.erase(m_tool_name);
 	
 	Log("Finished",v_warning);
