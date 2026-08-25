@@ -34,6 +34,7 @@ class TestAlerts: public Tool {
  std::string m_configfile;
  bool AlertReceive(const char* alert_name, const char* alert_payload);
  std::ofstream out_file;
+ std::chrono::time_point<std::chrono::steady_clock> last_run_start;
 
 };
 

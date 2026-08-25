@@ -107,20 +107,21 @@ bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 	// set a callback to cache configurations for upcoming run
 	m_data->sc_vars.AlertSubscribe("CacheConfig",
 	                               [this](const char* alert, const char* payload) -> bool { return CacheConfigs(alert, payload); });
+	// Add( control_name, control_type, setter, getter, lockable, hidden)
 	m_data->sc_vars.Add("CacheConfig", SlowControlElementType(COMMAND),
 	                    [this](const char* payload) -> std::string { return CacheConfigs(payload); }, // use lambda because it's overloaded
 	                    std::bind(&DatabaseWorkers::GetCachedConfigs, this, std::placeholders::_1),
-	                    false,true); // lockable, hidden
+	                    false,true);
 	
 	// DEBUG: add a button so we can query what devices have cached configs
-	m_data->sc_vars.Add("GetCachedDevices", SlowControlElementType(BUTTON),
-	                    [this](const char*) -> std::string { return GetCachedDevices(""); },
-	                    nullptr,false,false); // read func, lockable, hidden
+	m_data->sc_vars.Add("GetCachedDevices", SlowControlElementType(INFO),
+	                    nullptr,[this](const char*) -> std::string { return GetCachedDevices(""); },
+	                    false,false);
 	
 	// DEBUG: add a button so we can query the cached configuration for a device
 	m_data->sc_vars.Add("GetCachedDeviceConfig", SlowControlElementType(COMMAND),
 	                     std::bind(&DatabaseWorkers::GetCachedDeviceConfig, this, std::placeholders::_1),
-	                     nullptr,false,true); // read func, lockable, hidden FIXME make this unhidden when we support JSON values
+	                     nullptr,false,true); // FIXME unhide when we support JSON values
 	
 	last_exec = std::chrono::steady_clock::now();
 	
@@ -326,8 +327,11 @@ void DatabaseWorkers::DatabaseJobFail(void*& arg){
 
 std::string DatabaseWorkers::GetCachedDevices(const char*){
 	std::string devices;
+	bool first=true;
 	for(std::pair<const std::string, std::string>& device_configs : m_data->cached_configs){
-		devices+=", "+device_configs.first;
+		if(!first) devices += ", ";
+		first=false;
+		devices+=device_configs.first;
 	}
 	//printf("GetCachedDevices returning: '%s'\n",devices.c_str());
 	return devices;
@@ -339,12 +343,13 @@ std::string DatabaseWorkers::GetCachedDeviceConfig(const char* device){
 }
 
 std::string DatabaseWorkers::GetCachedConfigs(const char* arg){
-	if(arg) std::cout<<"GetCacheConfigs call with argument "<<arg<<std::endl;
+	//if(arg) printf("GetCacheConfigs call with argument %s\n",arg);
 	return ("{"+std::to_string(m_base_config_id)+","+std::to_string(m_runmode_config_id)+"}");
 }
 
 bool DatabaseWorkers::CacheConfigs(const char* alertname, const char* payload){
 	if(m_data->sc_vars[alertname]){
+	//printf("got cacheconfig with payload %s\n",payload);
 		m_data->sc_vars[alertname]->SetValue(payload);
 	} else {
 		// shouldn't really ever happen. This function is only triggered by alerts of the correct name...
@@ -377,7 +382,6 @@ std::string DatabaseWorkers::CacheConfigs(const char* payload){
 		pqxx::work tx(conn);
 		std::map<std::string, std::string> cached_configs;
 		
-/*
 		// for normal base/runmode config entry format: {"mydev":X, "mydev2":Y ...}
 		std::string query = "WITH base AS ( SELECT data FROM base_config WHERE config_id=$1), "
 		                    "  runmode AS ( SELECT data FROM runmode_config WHERE config_id=$2), "
@@ -385,13 +389,19 @@ std::string DatabaseWorkers::CacheConfigs(const char* payload){
 		                    " expanded AS ( SELECT key AS device, value AS version FROM merged CROSS JOIN jsonb_each(merged.data) ) "
 		                    "SELECT f.device, json_build_object('version', f.version, 'data', dc.data, 'base_config_id', $1, 'runmode_config_id', $2 ) "
 		                    "FROM expanded f JOIN device_config dc ON f.device=dc.device AND (f.version)::int=dc.version";
-*/
-		// to accommodate James' base/runmode config entry format: [{"device":"mydev", "version":X}, {"device":"mydev2", "version":Y} ...]
+		//printf("caching configs with query '%s', base_id %d, runmode_id %d\n",query.c_str(), new_base_config_id, new_runmode_config_id);
+		
+		/*
+		// to accommodate James' base/runmode config entry format:
+		// [{"device":"mydev", "version":X}, {"device":"mydev2", "version":Y} ...]
+		// FIXME this doesn't work: || with JSON arrays appends them, so runmode entries don't override base ones.
 		std::string query = "WITH base AS ( SELECT data FROM base_config WHERE config_id=$1), "
 		                    "  runmode AS ( SELECT data FROM runmode_config WHERE config_id=$2), "
 		                    "   merged AS ( SELECT base.data || runmode.data AS data FROM base CROSS JOIN runmode), "
 		                    " expanded AS ( SELECT d->>'device' AS device, d->>'version' AS version from merged CROSS JOIN jsonb_array_elements(merged.data) as d ) "
 		                    "SELECT f.device, json_build_object('version', f.version, 'data', dc.data, 'base_config_id', $1, 'runmode_config_id', $2 ) FROM expanded f JOIN device_config dc ON f.device=dc.device AND (f.version)::int=dc.version";
+		*/
+		
 		for(auto [ device, json ] : tx.query<std::string_view, std::string_view>(query, pqxx::params(new_base_config_id, new_runmode_config_id))){
 			//printf("cacheing device '%s', config '%s'\n",std::string(device).c_str(),std::string(json).c_str());
 			cached_configs[std::string{device}]=json;

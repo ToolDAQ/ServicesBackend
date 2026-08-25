@@ -1,6 +1,10 @@
 #include "MulticastReceiverSender.h"
 
 #include <chrono>
+#include <sys/types.h>
+#include <ifaddrs.h>
+#include <netdb.h>
+#include <set>
 
 namespace {
   const uint32_t MAX_UDP_PACKET_SIZE = 655355;
@@ -39,7 +43,14 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 		if(type_str=="logging") multicast_address = "239.192.1.2";
 		else multicast_address = "239.192.1.3";
 	}
-	printf("%s binding to %s:%d\n",m_tool_name.c_str(),multicast_address.c_str(),port);
+	Log("listening for multicast traffic on "+multicast_address+":"+std::to_string(port),v_debug);
+	
+	std::string out_interface_address="";
+	if(!m_variables.Get("multicast_out_address",out_interface_address)){
+		Log("multicast output interface not specified, leaving to default",v_warning);
+	} else {
+		Log("outgoing multicast will use interface "+out_interface_address,v_debug);
+	}
 	
 	// buffer received messages in a local vector until size exceeds local_buffer_size...
 	m_variables.Get("local_buffer_size",local_buffer_size);
@@ -108,6 +119,8 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 	addr.sin_addr.s_addr = htonl(INADDR_ANY);
 	a=0;
 	setsockopt(socket_handle, IPPROTO_IP, IP_MULTICAST_ALL, &a, sizeof(int));
+	// some additional complexity: to receive multicast packets from that group on any interface, we should bind to INADDR_ANY
+	// and then join that multicast group manually on each interface
 	
 	/* FIXME FIXME FIXME
 	// sending: which multicast group to send to
@@ -138,16 +151,53 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 	
 	// and join a multicast group
 	struct ip_mreq mreq;
-	mreq.imr_interface.s_addr = htonl(INADDR_ANY);
 	get_ok = inet_aton(multicast_address.c_str(), &mreq.imr_multiaddr);
 	if(get_ok==0){
 		Log("Bad multicast group '"+multicast_address+"'",v_error);
 		return false;
 	}
-	get_ok = setsockopt(socket_handle, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
-	if(get_ok!=0){
-		Log("Failed to join multicast group",v_error);
+	// ...on all interfaces
+	struct ifaddrs *ifaddr;
+	if(getifaddrs(&ifaddr)==-1){
+		Log("getifaddrs couldn't find any network interfaces!",v_error);
 		return false;
+	}
+	std::set<std::string> ifnames;
+	for(struct ifaddrs *ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next){
+		
+		if(ifa->ifa_addr == nullptr) continue; // ignore in case no IP address; e.g. if interface down/unconfigured
+		
+		int family = ifa->ifa_addr->sa_family;
+		if(family!=AF_INET && family!=AF_INET6) continue; // ignore AP_PACKET/AF_PACKET interfaces
+		
+		// only continue for the first address for an interface, since calling it multiple times gives 'address already in use'
+		if(ifnames.count(ifa->ifa_name)) continue;
+		
+		mreq.imr_interface = ((sockaddr_in*)ifa->ifa_addr)->sin_addr;
+		Log("joining multicast group in interface "+std::string(inet_ntoa(mreq.imr_interface)),v_debug);
+		
+		get_ok = setsockopt(socket_handle, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
+		if(get_ok!=0){
+			Log("Failed to join multicast group: "+std::string(strerror(errno)),v_error);
+			return false;
+		}
+		ifnames.emplace(ifa->ifa_name);
+	}
+	// we're responsible for freeing the list
+	freeifaddrs(ifaddr);
+	
+	// we can also specify which interface outgoing multicast traffic should go to
+	if(!out_interface_address.empty()){
+		struct in_addr out_addr;
+		get_ok = inet_aton(out_interface_address.c_str(), &out_addr);
+		if(get_ok==0){
+			Log("Bad output interface '"+out_interface_address+"'",v_error);
+			return false;
+		}
+		if (setsockopt(socket_handle, IPPROTO_IP, IP_MULTICAST_IF, &out_addr,sizeof(out_addr))== -1) {
+			Log("Failed to set multicast output interface",v_error);
+			return false;
+		}
 	}
 	
 	/* ----------------------------------------- */
@@ -182,7 +232,7 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 	}
 	
 	// thread needs a unique name
-	printf("spawning %s send/receiver thread\n",type_str.c_str());
+	Log("spawning "+type_str+" send/receiver thread",v_debug);
 	if(!m_data->utils.CreateThread(type_str+"_sendreceiver", &Thread, &thread_args)){
 		Log("Failed to spawn background thread",v_error,m_verbose);
 		return false;

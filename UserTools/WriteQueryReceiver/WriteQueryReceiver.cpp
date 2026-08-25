@@ -59,7 +59,7 @@ bool WriteQueryReceiver::Initialise(std::string configfile, DataModel &data){
 	managed_socket->socket->setsockopt(ZMQ_BACKLOG,conns_backlog);
 	
 	// add the socket to the datamodel for the SocketManager, which will handle making new connections to clients
-	std::unique_lock<std::mutex> locker(m_data->managed_sockets_mtx);
+	std::unique_lock<std::shared_mutex> locker(m_data->managed_sockets_mtx);
 	m_data->managed_sockets[remote_port_name] = managed_socket;
 	
 	/* ----------------------------------------- */
@@ -67,7 +67,7 @@ bool WriteQueryReceiver::Initialise(std::string configfile, DataModel &data){
 	/* ----------------------------------------- */
 	
 	// monitoring struct to encapsulate tracking info
-	locker = std::unique_lock<std::mutex>(m_data->monitoring_variables_mtx);
+	std::unique_lock<std::mutex> locker2(m_data->monitoring_variables_mtx);
 	m_data->monitoring_variables.emplace(m_tool_name, &monitoring_vars);
 	
 	thread_args.m_data = m_data;
@@ -122,7 +122,7 @@ bool WriteQueryReceiver::Finalise(){
 	m_data->num_threads--;
 	
 	if(m_data->managed_sockets.count(remote_port_name)){
-		std::unique_lock<std::mutex> locker(m_data->managed_sockets_mtx);
+		std::unique_lock<std::shared_mutex> locker(m_data->managed_sockets_mtx);
 		ManagedSocket* sock = m_data->managed_sockets[remote_port_name];
 		m_data->managed_sockets.erase(remote_port_name);
 		locker.unlock();

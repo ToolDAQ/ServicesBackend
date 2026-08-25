@@ -23,12 +23,12 @@ struct SocketManager_args : public Thread_args {
 	DataModel* m_data;
 	SocketManagerMonitoring* monitoring_vars;
 	DAQUtilities* daq_utils;
-	std::map<std::string,std::string> clientsmap;
 	
 	std::chrono::time_point<std::chrono::steady_clock> last_update;
 	std::chrono::milliseconds update_period_ms;
 	
 	std::timed_mutex* thread_mtx;
+	std::atomic<bool>* new_clients;
 	
 };
 
@@ -48,6 +48,11 @@ class SocketManager: public Tool {
 	std::string ClearClients(const char*);
 	
 	std::timed_mutex thread_mtx;
+	
+	// for monitoring
+	std::atomic<bool> new_clients=false;
+	std::map<std::string,std::string> clientsmap;
+	std::chrono::time_point<std::chrono::steady_clock> last_exec;
 	
 };
 
