@@ -29,7 +29,7 @@ The application can be run in a [Docker container](https://hub.docker.com/r/tool
 ```
 docker run --name=Middleman --net=host -dt tooldaq/mm_db
 ```
-It can then be controlled via the ToolDAQ RemoteControl application, or the [ToolDAQ WebServer](github.com/ToolDAQ/webserver).
+It can then be controlled via the ToolDAQ RemoteControl application, or the [ToolDAQ WebServer](https://github.com/ToolDAQ/webserver).
 
 *****************
 # For those from Hyper-Kamiokande
