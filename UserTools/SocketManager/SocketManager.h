@@ -46,6 +46,7 @@ class SocketManager: public Tool {
 	SocketManager_args thread_args;
 	SocketManagerMonitoring monitoring_vars;
 	std::string ClearClients(const char*);
+	std::string DisconnectAllClients(const char*);
 	
 	std::timed_mutex thread_mtx;
 	
