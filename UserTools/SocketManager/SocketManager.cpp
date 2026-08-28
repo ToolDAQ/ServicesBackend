@@ -42,6 +42,8 @@ bool SocketManager::Initialise(std::string configfile, DataModel &data){
 	m_data->sc_vars.Add("Clients", SlowControlElementType::INFO, nullptr, nullptr); // INFO type doesnt need read fnct
 	m_data->sc_vars.Add("ClearClients", SlowControlElementType::BUTTON,
 	                    std::bind(&SocketManager::ClearClients, this, std::placeholders::_1), nullptr);
+	m_data->sc_vars.Add("DisconnectAllClients", SlowControlElementType::BUTTON,
+	                    std::bind(&SocketManager::DisconnectAllClients, this, std::placeholders::_1), nullptr);
 	
 	return true;
 }
@@ -187,4 +189,40 @@ std::string SocketManager::ClearClients(const char*){
 	}
 	clientsmap.clear();
 	return "clients cleared";
+}
+
+std::string SocketManager::DisconnectAllClients(const char*){
+	
+	printf("SocketManager kicking all clients!\n");
+	
+	std::shared_lock<std::shared_mutex> container_locker(m_data->managed_sockets_mtx);
+	for(std::pair<const std::string&, ManagedSocket*> mgd_sock : m_data->managed_sockets){
+		
+		ManagedSocket* sock = mgd_sock.second;
+		std::unique_lock<std::mutex> socket_locker(sock->socket_mtx, std::defer_lock);
+		if(!socket_locker.try_lock()){
+			sock->socket_manager_request=true;
+			socket_locker.lock();
+			sock->socket_manager_request=false;
+		}
+		std::unique_lock<std::mutex> connections_locker(sock->connections_mtx);
+		
+		for(std::pair<const std::string, Store*>& aservice : sock->connections){
+			
+			std::string client_ip = aservice.second->Get<std::string>("ip");
+			std::string client_port = aservice.second->Get<std::string>(sock->remote_port_name);
+			
+			std::string connection_string="tcp://"+client_ip + ":" + client_port;
+			sock->socket->disconnect(connection_string.c_str());
+			
+			printf("Disconnected %s %s port\n",aservice.second->Get<std::string>("msg_value").c_str(), sock->remote_port_name.c_str());
+			
+		}
+		sock->connections.clear();
+		
+	}
+	container_locker.unlock();
+	new_clients = true;
+	
+	return "All clients disconnected";
 }

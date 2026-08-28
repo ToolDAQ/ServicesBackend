@@ -126,7 +126,6 @@ bool WriteQueryReceiver::Finalise(){
 		ManagedSocket* sock = m_data->managed_sockets[remote_port_name];
 		m_data->managed_sockets.erase(remote_port_name);
 		locker.unlock();
-		if(sock->socket) delete sock->socket; // destructor closes socket
 		delete sock;
 	}
 	

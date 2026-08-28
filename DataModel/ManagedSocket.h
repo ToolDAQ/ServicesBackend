@@ -18,6 +18,7 @@ struct ManagedSocket {
 		for(auto&& aconn : connections){
 			delete aconn.second;
 		}
+		delete socket;
 	}
 };
 
