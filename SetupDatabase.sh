@@ -335,6 +335,17 @@ echo "creating locations table"
 psql -ddaq -c "CREATE type tank_location as enum ('bottom', 'barrel', 'top');"
 psql -ddaq -c "CREATE TABLE locations (id int PRIMARY KEY, x real NOT NULL, y real NOT NULL, z real, type text NOT NULL, size real NOT NULL, location tank_location NOT NULL);"
 
+# upload PMT locations from the geometry CSV given in GEOFILE, if provided
+if [ -n "$GEOFILE" ] && [ -f "$GEOFILE" ]; then
+  echo "seeding locations from $GEOFILE"
+  tail -n +2 "$GEOFILE" \
+    | tr -d '\r' \
+    | sed 's/$/,,0/' \
+    | psql -ddaq -c "\copy locations (id, y, z, x, location, type, size) from stdin with delimiter ','"
+else
+  echo "locations table not seeded - set GEOFILE to a geometry CSV to seed automatically"
+fi
+
 echo "creating shift_check table"
 psql -ddaq -c "CREATE TABLE shift_check ( time timestamp with time zone NOT NULL DEFAULT now(), user_id integer references users(user_id), data jsonb NOT NULL) PARTITION BY RANGE (time);"
 
