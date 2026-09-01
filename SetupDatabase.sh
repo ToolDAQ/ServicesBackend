@@ -25,7 +25,7 @@ echo "LD_LIBRARY_PATH+=:/usr/pgsql-18/lib" >> SetupDB.sh
 
 # only take action on first run
 if [ -f /.DBSetupDone ]; then
-	
+
 	# systemd version for baremetal
 	if [ ${USE_SYSTEMD} -eq 0 ]; then
 		# note no [ ] in following check
@@ -112,14 +112,14 @@ if [ ${USE_SYSTEMD} -eq 0 ]; then
 		Environment=PGDATA=${PGDATA}
 		EOF
 	fi
-	
+
 	# systemd version
 	sudo systemctl enable --now postgresql-18
 else
 	# container version
 	sudo mkdir -p /var/run/postgresql && sudo chown -R postgres /var/run/postgresql
 	sudo -u postgres $(which pg_ctl) start -D ${PGDATA} -s -o "-p 5432" -w -t 300
-	
+
 	#echo "registering database to start on boot"
 	#echo " sudo -u postgres $(which pg_ctl) start -D ${PGDATA} -s -o \"-p 5432\" -w -t 300;" >> /etc/rc.local
 fi
@@ -299,7 +299,7 @@ psql -ddaq -c 'CREATE OR REPLACE FUNCTION "fn_rootplot_ver"() returns "pg_catalo
 psql -ddaq -c 'CREATE TRIGGER trig_rootplot_ver BEFORE insert ON rootplots FOR EACH ROW EXECUTE PROCEDURE fn_rootplot_ver();'
 
 echo "creating plotlyplots table"
-psql -ddaq -c "CREATE TABLE plotlyplots (time timestamp with time zone NOT NULL DEFAULT now(), name text NOT NULL, version int NOT NULL, data json NOT NULL, layout json NOT NULL DEFAULT '{}', lifetime int NOT NULL DEFAULT 5);"
+psql -ddaq -c "CREATE TABLE plotlyplots (time timestamp with time zone NOT NULL DEFAULT now(), name text NOT NULL, version int NOT NULL, data json NOT NULL, layout json NOT NULL DEFAULT '{}', traces json NOT NULL DEFAULT '{}', lifetime int NOT NULL DEFAULT 5);"
 
 psql -ddaq -c "CREATE UNIQUE INDEX ON plotlyplots (name, version DESC NULLS LAST)"
 
