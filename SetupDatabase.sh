@@ -25,7 +25,7 @@ echo "LD_LIBRARY_PATH+=:/usr/pgsql-18/lib" >> SetupDB.sh
 
 # only take action on first run
 if [ -f /.DBSetupDone ]; then
-
+	
 	# systemd version for baremetal
 	if [ ${USE_SYSTEMD} -eq 0 ]; then
 		# note no [ ] in following check
@@ -112,14 +112,14 @@ if [ ${USE_SYSTEMD} -eq 0 ]; then
 		Environment=PGDATA=${PGDATA}
 		EOF
 	fi
-
+	
 	# systemd version
 	sudo systemctl enable --now postgresql-18
 else
 	# container version
 	sudo mkdir -p /var/run/postgresql && sudo chown -R postgres /var/run/postgresql
 	sudo -u postgres $(which pg_ctl) start -D ${PGDATA} -s -o "-p 5432" -w -t 300
-
+	
 	#echo "registering database to start on boot"
 	#echo " sudo -u postgres $(which pg_ctl) start -D ${PGDATA} -s -o \"-p 5432\" -w -t 300;" >> /etc/rc.local
 fi
