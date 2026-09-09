@@ -311,6 +311,10 @@ echo "creating event_display table"
 # events themselves will be zstd compressed
 psql -ddaq -c "CREATE TABLE event_display (readout_number bigint PRIMARY KEY, run_number bigint NOT NULL, time timestamp with time zone NOT NULL DEFAULT now(),  data bytea NOT NULL, type integer NOT NULL);"
 
+echo "creating autoincrement function for event_display readout_number"
+psql -ddaq -c 'CREATE OR REPLACE FUNCTION "fn_event_display_readout_number"() returns "pg_catalog"."trigger" as $BODY$ begin new.readout_number = (select COALESCE(MAX(readout_number),0)+1 from event_display); return NEW; end; $BODY$ LANGUAGE plpgsql VOLATILE COST 100;'
+psql -ddaq -c 'CREATE TRIGGER trig_event_display_readout_number BEFORE insert ON event_display FOR EACH ROW EXECUTE PROCEDURE fn_event_display_readout_number();'
+
 echo "creating index on event type"
 # is this overkill?
 psql -ddaq -c "CREATE INDEX ON event_display (readout_number);"
