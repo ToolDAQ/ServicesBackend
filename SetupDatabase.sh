@@ -299,7 +299,7 @@ psql -ddaq -c 'CREATE OR REPLACE FUNCTION "fn_rootplot_ver"() returns "pg_catalo
 psql -ddaq -c 'CREATE TRIGGER trig_rootplot_ver BEFORE insert ON rootplots FOR EACH ROW EXECUTE PROCEDURE fn_rootplot_ver();'
 
 echo "creating plotlyplots table"
-psql -ddaq -c "CREATE TABLE plotlyplots (time timestamp with time zone NOT NULL DEFAULT now(), name text NOT NULL, version int NOT NULL, data json NOT NULL, layout json NOT NULL DEFAULT '{}', lifetime int NOT NULL DEFAULT 5);"
+psql -ddaq -c "CREATE TABLE plotlyplots (time timestamp with time zone NOT NULL DEFAULT now(), name text NOT NULL, version int NOT NULL, data json NOT NULL, layout json NOT NULL DEFAULT '{}', traces json NOT NULL DEFAULT '[]', lifetime int NOT NULL DEFAULT 5);"
 
 psql -ddaq -c "CREATE UNIQUE INDEX ON plotlyplots (name, version DESC NULLS LAST)"
 
