@@ -8,6 +8,7 @@ RUN yum install -y       \
     emacs                \
     iputils              \
     iproute              \
+    systemd-devel        \
     python3-psycopg2     \
     && yum clean all     \
     && rm -rf /var/cache/yum

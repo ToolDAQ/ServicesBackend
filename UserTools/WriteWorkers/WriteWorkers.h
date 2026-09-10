@@ -59,6 +59,7 @@ class WriteWorkers: public Tool {
 	
 	static bool WriteMessageJob(void*& arg);
 	static void WriteMessageFail(void*& arg);
+	MLogger* logger;
 	
 };
 

@@ -58,6 +58,7 @@ class MulticastWorkers: public Tool {
 	bool Finalise(); ///< Finalise funciton used to clean up resorces.
 	
 	private:
+	MLogger* logger;
 	static void Thread(Thread_args* args); ///< job distributor thread function that pulls batches of multicast messages from upstream and passes them to the job queue
 	MulticastJobDistributor_args thread_args; ///< args for the child thread that produces and distributes jobs to the worker farm
 	MulticastWorkerMonitoring monitoring_vars;

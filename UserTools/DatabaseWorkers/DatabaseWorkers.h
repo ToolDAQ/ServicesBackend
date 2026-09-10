@@ -24,11 +24,12 @@ enum class DatabaseJobStep { generics, logging, monitoring, rootplots, plotlyplo
 
 struct DatabaseJobStruct {
 	
-	DatabaseJobStruct(Pool<DatabaseJobStruct>* pool, DataModel* data, DatabaseWorkerMonitoring* mon) : m_pool(pool), m_data(data), monitoring_vars(mon){};
+	DatabaseJobStruct(Pool<DatabaseJobStruct>* pool, DataModel* data, DatabaseWorkerMonitoring* mon, std::atomic<int>* log_mon_workers) : m_pool(pool), m_data(data), monitoring_vars(mon), n_log_mon_workers(log_mon_workers){};
 	DataModel* m_data;
 	DatabaseWorkerMonitoring* monitoring_vars;
 	Pool<DatabaseJobStruct>* m_pool;
 	std::string m_job_name;
+	std::atomic<int>* n_log_mon_workers;
 	
 	std::vector<QueryBatch*> read_queue;
 	std::vector<QueryBatch*> write_queue;
@@ -77,6 +78,8 @@ struct DatabaseJobStruct {
 
 struct DatabaseJobDistributor_args : Thread_args {
 	DataModel* m_data;
+	int* max_log_mon_workers;
+	std::atomic<int>* n_log_mon_workers;
 	DatabaseWorkerMonitoring* monitoring_vars;
 	Pool<DatabaseJobStruct> job_struct_pool;
 	JobQueue* job_queue;
@@ -115,6 +118,9 @@ class DatabaseWorkers: public Tool {
 	
 	int m_base_config_id;
 	int m_runmode_config_id;
+	int max_log_mon_workers;
+	std::atomic<int> n_log_mon_workers=0;
+	MLogger* logger;
 	
 };
 

@@ -8,6 +8,7 @@ bool WriteWorkers::Initialise(std::string configfile, DataModel &data){
 	InitialiseTool(data);
 	m_configfile = configfile;
 	InitialiseConfiguration(configfile);
+	logger = m_data->logger;
 	//m_variables.Print();
 	
 	if(!m_variables.Get("verbose",m_verbose)) m_verbose=1;
@@ -21,7 +22,7 @@ bool WriteWorkers::Initialise(std::string configfile, DataModel &data){
 	thread_args.m_data = m_data;
 	thread_args.monitoring_vars = &monitoring_vars;
 	if(!m_data->utils.CreateThread("write_job_distributor", &Thread, &thread_args)){
-		Log("Failed to spawn background thread",v_error,m_verbose);
+		LOG(logger,LOG_ERR,"Failed to spawn %s background thread",m_tool_name.c_str());
 		return false;
 	}
 	m_data->num_threads++;
@@ -35,7 +36,7 @@ bool WriteWorkers::Execute(){
 	// FIXME ok but actually this kills all our jobs, not just our job distributor
 	// so we don't want to do that.
 	if(!thread_args.running){
-		Log("Execute found thread not running!",v_error);
+		LOG(logger,LOG_ERR,"%s Execute found thread not running!",m_tool_name.c_str());
 		Finalise();
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		++(monitoring_vars.thread_crashes);
@@ -48,14 +49,14 @@ bool WriteWorkers::Execute(){
 bool WriteWorkers::Finalise(){
 	
 	// signal job distributor thread to stop
-	Log("Joining job distributor thread",v_warning);
+	LOG(logger,LOG_NOTICE,"%s Joining job distributor thread",m_tool_name.c_str());
 	m_data->utils.KillThread(&thread_args);
 	m_data->num_threads--;
 	
 	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
 	m_data->monitoring_variables.erase(m_tool_name);
 	
-	Log("Finished",v_warning);
+	LOG(logger,LOG_NOTICE,"%s Finished",m_tool_name.c_str());
 	return true;
 }
 
@@ -90,7 +91,7 @@ void WriteWorkers::Thread(Thread_args* args){
 			the_job->data = m_args->job_struct_pool.GetNew(&m_args->job_struct_pool, m_args->m_data, m_args->monitoring_vars);
 		} else {
 			// this should never happen as jobs should return their args to the pool
-			std::cerr<<"WriteWorker Job with non-null data pointer!"<<std::endl;
+			LOG(m_args->m_data->logger,LOG_ERR,"WriteWorker Job with non-null data pointer!");
 			// FIXME ... do we assume this job args object is valid, and use it?
 			// this could lead to a segfault (if the args got returned to the pool and deleted)
 			// or corruption (if the args got returned to the pool and given to another job)
@@ -119,7 +120,7 @@ void WriteWorkers::WriteMessageFail(void*& arg){
 	// safety check in case the job somehow fails after returning its args to the pool
 	if(arg==nullptr){
 		std::cerr<<"multicast worker fail with no args"<<std::endl;
-		return; // FIXME log this occurrence?
+		return;
 	}
 	
 	// FIXME do something here
@@ -138,7 +139,7 @@ void WriteWorkers::WriteMessageFail(void*& arg){
 	//m_args->m_data->query_buffer_pool.Add(m_args->msg_buffer);  << FIXME not back to the pool but reply queue
 	
 	WriteJobStruct* m_args=static_cast<WriteJobStruct*>(arg);
-	std::cerr<<m_args->m_job_name<<" failure"<<std::endl;
+	LOG(m_args->m_data->logger, LOG_ERR, "%s failure", m_args->m_job_name);
 	++(m_args->monitoring_vars->jobs_failed);
 	
 	// return our job args to the pool
@@ -170,14 +171,15 @@ bool WriteWorkers::WriteMessageJob(void*& arg){
 			// compressed - decompress it
 			m_args->decompressed_bytes = ZSTD_getFrameContentSize(query.parts[3].data(), query.parts[3].size());
 			if(m_args->decompressed_bytes==ZSTD_CONTENTSIZE_UNKNOWN || m_args->decompressed_bytes==ZSTD_CONTENTSIZE_ERROR){
-				// bad message, discard // FIXME log it
-				printf("%s ignoring zstd bad write message '%.*s'\n",m_args->m_job_name.c_str(), query.msg_raw().size(), query.msg_raw().data());
+				// bad message, discard
+				LOG(m_args->m_data->logger,LOG_NOTICE,"%s ignoring zstd bad write message '%.*s'",
+				    m_args->m_job_name.c_str(), query.msg_raw().size(), query.msg_raw().data());
 				query.err = "bad zstd size";
 				continue;
 			}
 			if(m_args->decompressed_bytes > MAX_DECOMPRESSED_MSG_SIZE){
-				printf("%s ignoring zstd message requesting excessive '%lu' byte decompression buffer\n",
-				       m_args->m_job_name.c_str(), m_args->decompressed_bytes);
+				LOG(m_args->m_data->logger,LOG_NOTICE,"%s ignoring zstd message requesting excessive '%lu' byte decompression buffer",
+				    m_args->m_job_name.c_str(), m_args->decompressed_bytes);
 				query.err = "zstd too large decompressed size";
 				continue;
 			}
@@ -186,8 +188,9 @@ bool WriteWorkers::WriteMessageJob(void*& arg){
 			query.decompress_buffer.resize(m_args->decompressed_bytes);
 			m_args->decompressed_bytes = ZSTD_decompressDCtx(zstd_ctx.get(),(void*)query.decompress_buffer.data(),m_args->decompressed_bytes, query.parts[3].data(), query.parts[3].size());
 			 if(ZSTD_isError(m_args->decompressed_bytes)){
-				printf("%s error decompressing zstd message from %.*s: %s\n", // FIXME log these
-				       m_args->m_job_name.c_str(), query.client_id().size(), query.client_id().data(), ZSTD_getErrorName(m_args->decompressed_bytes));
+				LOG(m_args->m_data->logger,LOG_NOTICE,"%s error decompressing zstd message from %.*s: %s",
+				    m_args->m_job_name.c_str(), query.client_id().size(), query.client_id().data(),
+				    ZSTD_getErrorName(m_args->decompressed_bytes));
 				query.err = "zstd decompression error";
 				continue;
 			}
@@ -195,7 +198,7 @@ bool WriteWorkers::WriteMessageJob(void*& arg){
 		} else {
 			m_args->the_msg = query.msg_raw();
 		}
-		// XXX 
+		// XXX
 		//printf("WriteWorker processing %.*s query '%.*s'\n",query.topic().size(),query.topic().data(),m_args->the_msg.size(), m_args->the_msg.data());
 		
 		// we can only batch queries destined for the same table,
@@ -238,8 +241,7 @@ bool WriteWorkers::WriteMessageJob(void*& arg){
 				continue;
 				break;
 			default:
-				std::cerr<<"unrecognised topic '"<<query.topic()<<"'"<<std::endl;
-				// FIXME unrecognised topic log it.
+				LOG(m_args->m_data->logger,LOG_NOTICE,"unrecognised topic '%.*s'",query.topic().size(),query.topic().data());
 				break;
 		}
 		

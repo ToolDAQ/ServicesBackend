@@ -18,6 +18,7 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 	InitialiseTool(data);
 	m_configfile = configfile;
 	InitialiseConfiguration(configfile);
+	logger=m_data->logger;
 	//m_variables.Print();
 	
 	/* ----------------------------------------- */
@@ -34,7 +35,7 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 	
 	m_variables.Get("type",type_str);
 	if(type_str!="logging" && type_str!="monitoring"){
-		Log("invalid port type '"+type_str+"'; valid values are 'logging' and 'monitoring'",v_error);
+		LOG(logger,LOG_ERR,"invalid port type '%s'; valid values are 'logging' and 'monitoring'",type_str.c_str());
 		return false;
 	}
 	m_variables.Get("verbose",m_verbose);
@@ -43,13 +44,13 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 		if(type_str=="logging") multicast_address = "239.192.1.2";
 		else multicast_address = "239.192.1.3";
 	}
-	Log("listening for multicast traffic on "+multicast_address+":"+std::to_string(port),v_debug);
+	LOG(logger,LOG_NOTICE,"listening for %s traffic on %s:%d",type_str.c_str(), multicast_address,port);
 	
 	std::string out_interface_address="";
 	if(!m_variables.Get("multicast_out_address",out_interface_address)){
-		Log("multicast output interface not specified, leaving to default",v_warning);
+		LOG(logger,LOG_NOTICE,"%s output interface not specified, leaving to default",type_str.c_str());
 	} else {
-		Log("outgoing multicast will use interface "+out_interface_address,v_debug);
+		LOG(logger,LOG_NOTICE,"outgoing %s will use interface %s",type_str.c_str(),out_interface_address.c_str());
 	}
 	
 	// buffer received messages in a local vector until size exceeds local_buffer_size...
@@ -71,7 +72,7 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 	
 	socket_handle = socket(AF_INET, SOCK_DGRAM, 0);
 	if(socket_handle<=0){
-		Log(std::string{"Failed to open multicast socket with error "}+strerror(errno),v_error);
+		LOG(logger,LOG_ERR,"Failed to open %s socket with error %s",type_str.c_str(),strerror(errno));
 		return false;
 	}
 	
@@ -85,7 +86,7 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 	l.l_linger = 0;  // seconds to linger for
 	get_ok = setsockopt(socket_handle, SOL_SOCKET, SO_LINGER, (char*) &l, sizeof(l));
 	if(get_ok!=0){
-		Log(std::string{"Failed to set multicast socket linger with error "}+strerror(errno),v_error);
+		LOG(logger,LOG_ERR,"Failed to set %s socket linger with error %s",type_str.c_str(),strerror(errno));
 		return false;
 	}
 	
@@ -95,14 +96,14 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 	int a =1;
 	get_ok = setsockopt(socket_handle, SOL_SOCKET, SO_REUSEADDR, &a, sizeof(a));
 	if(get_ok!=0){
-		Log(std::string{"Failed to set multicast socket reuseaddr with error "}+strerror(errno),v_error);
+		LOG(logger,LOG_ERR,"Failed to set %s socket reuseaddr with error %s",type_str.c_str(),strerror(errno));
 		return false;
 	}
 	
 	// set the socket to non-blocking mode - should be irrelevant as we poll
 	get_ok = fcntl(socket_handle, F_SETFL, O_NONBLOCK);
 	if(get_ok!=0){
-		Log(std::string{"Failed to set multicast socket to non-blocking with error "}+strerror(errno),v_warning);
+		LOG(logger,LOG_WARNING,"Failed to set %s socket to non-blocking with error %s",type_str.c_str(),strerror(errno));
 	}
 	
 	
@@ -145,7 +146,7 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 	// to listen we need to bind to the socket
 	get_ok = (bind(socket_handle, (struct sockaddr*)&addr, addrlen) == 0);
 	if(!get_ok) {
-		Log("Failed to bind to multicast listen socket",v_error);
+		LOG(logger,LOG_ERR,"Failed to bind to %s listen socket: ",type_str.c_str(),strerror(errno));
 		return false;
 	}
 	
@@ -153,13 +154,13 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 	struct ip_mreq mreq;
 	get_ok = inet_aton(multicast_address.c_str(), &mreq.imr_multiaddr);
 	if(get_ok==0){
-		Log("Bad multicast group '"+multicast_address+"'",v_error);
+		LOG(logger,LOG_ERR,"Bad %s multicast group '%s'",type_str.c_str(),multicast_address.c_str());
 		return false;
 	}
 	// ...on all interfaces
 	struct ifaddrs *ifaddr;
 	if(getifaddrs(&ifaddr)==-1){
-		Log("getifaddrs couldn't find any network interfaces!",v_error);
+		LOG(logger,LOG_ERR,"%s getifaddrs couldn't find any network interfaces!",type_str.c_str());
 		return false;
 	}
 	std::set<std::string> ifnames;
@@ -174,11 +175,12 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 		if(ifnames.count(ifa->ifa_name)) continue;
 		
 		mreq.imr_interface = ((sockaddr_in*)ifa->ifa_addr)->sin_addr;
-		Log("joining multicast group in interface "+std::string(inet_ntoa(mreq.imr_interface)),v_debug);
+		LOG(logger,LOG_NOTICE,"%s joining multicast group in interface %s",
+		    type_str.c_str(),inet_ntoa(mreq.imr_interface));
 		
 		get_ok = setsockopt(socket_handle, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
 		if(get_ok!=0){
-			Log("Failed to join multicast group: "+std::string(strerror(errno)),v_error);
+			LOG(logger,LOG_ERR,"%s failed to join multicast group: %s",type_str.c_str(),strerror(errno));
 			return false;
 		}
 		ifnames.emplace(ifa->ifa_name);
@@ -191,11 +193,13 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 		struct in_addr out_addr;
 		get_ok = inet_aton(out_interface_address.c_str(), &out_addr);
 		if(get_ok==0){
-			Log("Bad output interface '"+out_interface_address+"'",v_error);
+			LOG(logger,LOG_ERR,"Bad %s output interface '%s': %s",
+			    type_str.c_str(),out_interface_address.c_str(),strerror(errno));
 			return false;
 		}
 		if (setsockopt(socket_handle, IPPROTO_IP, IP_MULTICAST_IF, &out_addr,sizeof(out_addr))== -1) {
-			Log("Failed to set multicast output interface",v_error);
+			LOG(logger,LOG_ERR,"Failed to set %s output interface '%s': %s",
+			    type_str.c_str(),out_interface_address.c_str(),strerror(errno));
 			return false;
 		}
 	}
@@ -232,9 +236,9 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 	}
 	
 	// thread needs a unique name
-	Log("spawning "+type_str+" send/receiver thread",v_debug);
+	LOG(logger,LOG_INFO,"spawning %s send/receiver thread",type_str.c_str());
 	if(!m_data->utils.CreateThread(type_str+"_sendreceiver", &Thread, &thread_args)){
-		Log("Failed to spawn background thread",v_error,m_verbose);
+		LOG(logger,LOG_ERR,"Failed to spawn background %s thread",type_str.c_str());
 		return false;
 	}
 	m_data->num_threads++;
@@ -255,7 +259,7 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 bool MulticastReceiverSender::Execute(){
 	
 	if(!thread_args.running){
-		Log("Execute found thread not running!",v_error);
+		LOG(logger,LOG_ERR,"Execute found %s thread not running!",type_str.c_str());
 		Finalise();
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		// FIXME if restarts > X times in last Y mins, alarm (bypass, shove into DB? send to websocket?) and StopLoop.
@@ -308,7 +312,7 @@ bool MulticastReceiverSender::Execute(){
 bool MulticastReceiverSender::Finalise(){
 	
 	// signal background receiver thread to stop
-	//Log("Joining receiver thread",v_warning);
+	LOG(logger,LOG_NOTICE,"Joining %s receiver thread",type_str.c_str());
 	m_data->utils.KillThread(&thread_args);
 	m_data->num_threads--;
 	
@@ -327,7 +331,7 @@ bool MulticastReceiverSender::Finalise(){
 	if(socket_handle>0){
 		get_ok = close(socket_handle);
 		if(get_ok!=0){
-			Log(std::string{"Error closing socket "}+strerror(errno),v_error);
+			LOG(logger,LOG_ERR,"Error closing %s socket: %s",type_str.c_str(),strerror(errno));
 			return false;
 		}
 	}
@@ -335,7 +339,7 @@ bool MulticastReceiverSender::Finalise(){
 	locker = std::unique_lock<std::mutex>(m_data->monitoring_variables_mtx);
 	m_data->monitoring_variables.erase(m_tool_name);
 	
-	Log("Finished",v_warning);
+	LOG(logger,LOG_NOTICE,"%s Finished",type_str.c_str());
 	return true;
 }
 
@@ -371,19 +375,19 @@ void MulticastReceiverSender::Thread(Thread_args* arg){
 	} catch(zmq::error_t& err){
 		// ignore poll aborting due to signals
 		if(zmq_errno()==EINTR) return;
-		std::cerr<<m_args->m_tool_name<<" poll caught "<<err.what()<<std::endl; // FIXME better logging
+		LOG(m_args->m_data->logger,LOG_WARNING,"%s poll caught %s",m_args->m_tool_name.c_str(),err.what());
 		++(m_args->monitoring_vars->polls_failed);
 		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread?
 		return;
 	}
 	catch(...){
-		std::cerr<<m_args->m_tool_name<<" poll caught "<<strerror(errno)<<std::endl;
+		LOG(m_args->m_data->logger,LOG_WARNING,"%s poll caught %s",m_args->m_tool_name.c_str(),strerror(errno));
 		++(m_args->monitoring_vars->polls_failed);
 		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 		return;
 	}
 	if(m_args->get_ok<0){
-		std::cerr<<m_args->m_tool_name<<" poll failed with "<<zmq_strerror(errno)<<std::endl;
+		LOG(m_args->m_data->logger,LOG_WARNING,"%s poll failed with %s",m_args->m_tool_name.c_str(),zmq_strerror(errno));
 		++(m_args->monitoring_vars->polls_failed);
 		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread?
 		return;
@@ -398,20 +402,18 @@ void MulticastReceiverSender::Thread(Thread_args* arg){
 		m_args->get_ok = recvfrom(m_args->socket, m_args->message, MAX_UDP_PACKET_SIZE, 0, (struct sockaddr*)&m_args->addr, &m_args->addrlen);
 		if(m_args->get_ok <= 0){
 			++(m_args->monitoring_vars->rcv_fails);
-			// FIXME better logging
-			std::cerr<<m_args->m_tool_name<<": Failed to receive message from "
-			         <<inet_ntoa(m_args->addr.sin_addr) // FIXME is this valid on failure?
-			         <<" with error "<<strerror(errno)<<std::endl;
+			LOG(m_args->m_data->logger,LOG_ERR,"%s: Failed to receive message from %s with error %s",
+			    m_args->m_tool_name.c_str(), inet_ntoa(m_args->addr.sin_addr), // FIXME is this valid on failure?
+			    strerror(errno));
 			// FIXME error handling - is this a socket error or just a message error?
 		} else {
 			
 			++(m_args->monitoring_vars->msgs_rcvd);
 			m_args->monitoring_vars->bytes_received += m_args->get_ok;
-			//m_data->Log("Received multicast message '"+std::string(m_args->message)
-			//            +"' from "+std::string{inet_ntoa(&m_args->addr->sin_addr)},12);
+			// XXX
 			//printf("received multicast message %s from %s\n",m_args->message,inet_ntoa(m_args->addr.sin_addr));
 			
-			m_args->in_local_queue->emplace_back(std::string_view(m_args->message,m_args->get_ok));
+			m_args->in_local_queue->emplace_back(m_args->message,m_args->get_ok);
 			
 		}
 	}
@@ -431,7 +433,7 @@ void MulticastReceiverSender::Thread(Thread_args* arg){
 		
 		// check success
 		if(m_args->get_ok < 0){
-			//m_data->Log("Error sending multicast message: "+strerror(errno),v_error); // FIXME ensure this isn't circular
+			LOG(m_args->m_data->logger,LOG_ERR,"Error sending %s message: %s",m_args->m_tool_name.c_str(),strerror(errno));
 			++(m_args->monitoring_vars->send_fails);
 		} else {
 			++(m_args->monitoring_vars->msgs_sent);

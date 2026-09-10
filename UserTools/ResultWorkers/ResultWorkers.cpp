@@ -12,6 +12,7 @@ bool ResultWorkers::Initialise(std::string configfile, DataModel &data){
 	InitialiseTool(data);
 	m_configfile = configfile;
 	InitialiseConfiguration(configfile);
+	logger = m_data->logger;
 	//m_variables.Print();
 	
 	if(!m_variables.Get("verbose",m_verbose)) m_verbose=1;
@@ -27,7 +28,7 @@ bool ResultWorkers::Initialise(std::string configfile, DataModel &data){
 	thread_args.m_data = m_data;
 	thread_args.monitoring_vars = &monitoring_vars;
 	if(!m_data->utils.CreateThread("result_job_distributor", &Thread, &thread_args)){
-		Log("Failed to spawn background thread",v_error,m_verbose);
+		LOG(logger,LOG_ERR,"Failed to spawn %s background thread",m_tool_name.c_str());
 		return false;
 	}
 	m_data->num_threads++;
@@ -41,7 +42,7 @@ bool ResultWorkers::Execute(){
 	// FIXME ok but actually this kills all our jobs, not just our job distributor
 	// so we don't want to do that.
 	if(!thread_args.running){
-		Log("Execute found thread not running!",v_error);
+		LOG(logger,LOG_ERR,"%s Execute found thread not running!",m_tool_name.c_str());
 		Finalise();
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		++(monitoring_vars.thread_crashes);
@@ -54,14 +55,14 @@ bool ResultWorkers::Execute(){
 bool ResultWorkers::Finalise(){
 	
 	// signal job distributor thread to stop
-	Log("Joining receiver thread",v_warning);
+	LOG(logger,LOG_NOTICE,"%s Joining receiver thread",m_tool_name.c_str());
 	m_data->utils.KillThread(&thread_args);
 	m_data->num_threads--;
 	
 	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
 	m_data->monitoring_variables.erase(m_tool_name);
 	
-	Log("Finished",v_warning);
+	LOG(logger,LOG_NOTICE,"%s Finished",m_tool_name.c_str());
 	return true;
 }
 
@@ -93,8 +94,7 @@ void ResultWorkers::Thread(Thread_args* args){
 			// so don't pass job-specific variables to the constructor
 			the_job->data = m_args->job_struct_pool.GetNew(&m_args->job_struct_pool, m_args->m_data, m_args->monitoring_vars);
 		} else {
-			// FIXME error
-			std::cerr<<"result_worker Job with non-null data pointer!"<<std::endl;
+			LOG(m_args->m_data->logger,LOG_ERR,"result_worker Job with non-null data pointer!");
 		}
 		
 		the_job->func = ResultJob;
@@ -120,15 +120,15 @@ void ResultWorkers::ResultJobFail(void*& arg){
 	
 	// safety check in case the job somehow fails after returning its args to the pool
 	if(arg==nullptr){
-		std::cerr<<"multicast worker fail with no args"<<std::endl;
-		return; // FIXME log this occurrence?
+		SLOG(LOG_ERR,"multicast worker fail with no args");
+		return;
 	}
 	
 	// FIXME hmm, well, i guess we say the query failed
 	// - we had the results, but then lost them before sending
 	
 	ResultJobStruct* m_args=reinterpret_cast<ResultJobStruct*>(arg);
-	std::cerr<<m_args->m_job_name<<" failure"<<std::endl;
+	LOG(m_args->m_data->logger,LOG_ERR,"%s job failure",m_args->m_job_name.c_str());
 	++(m_args->monitoring_vars->jobs_failed);
 	
 	// return our job args to the pool
@@ -199,7 +199,7 @@ bool ResultWorkers::ResultJob(void*& arg){
 							query.setresponse(i, CompressMsg(zstd_ctx, compress_buf, query.result[i][0].c_str()));
 						}
 					} catch (std::exception& e){
-						std::cerr<<"caught "<<e.what()<<" trying to access query result!"<<std::endl;
+						LOG(m_args->m_data->logger,LOG_ERR,"caught %s trying to access query result!",e.what());
 						query.setsuccess(0);
 						query.setresponserows(1);
 						query.setresponse(0, CompressMsg(zstd_ctx, compress_buf, "error accessing query result"));
@@ -303,7 +303,7 @@ bool ResultWorkers::ResultJob(void*& arg){
 						break;
 						
 					case query_topic::generic:
-							
+						
 						if(!query.err.empty()){
 							query.setsuccess(0);
 							query.setresponserows(1);
@@ -338,8 +338,8 @@ bool ResultWorkers::ResultJob(void*& arg){
 								}
 								
 							} catch (std::exception& e){
-								std::cerr<<"caught "<<current_exception_name()<<": "<<e.what()
-								         <<" trying to access query result!"<<std::endl;
+								LOG(m_args->m_data->logger,LOG_ERR,"caught %s: %s trying to access query result!",
+								    current_exception_name().c_str(),e.what());
 								query.setsuccess(0);
 								query.setresponserows(1);
 								query.setresponse(0, CompressMsg(zstd_ctx, compress_buf, "Error accessing query result"));
@@ -351,7 +351,8 @@ bool ResultWorkers::ResultJob(void*& arg){
 						
 					default:
 						// FIXME corrupted topic, log it.
-						std::cerr<<m_args->m_job_name<<" unknown topic "<<query.topic()<<std::endl;
+						LOG(m_args->m_data->logger,LOG_ERR,"%s unknown topic %.*s",
+						    m_args->m_job_name,query.topic().size(),query.topic().data());
 						break;
 					
 				}
@@ -392,7 +393,7 @@ std::string_view ResultWorkers::CompressMsg(ZSTD_CCtx* zstd_ctx, char* compress_
 		thread_local size_t compressed_bytes;
 		compressed_bytes = ZSTD_compressCCtx(zstd_ctx, compress_buf, COMPRESS_BUFFER_SIZE, msg.data(), msg.size(), compression_level);
 		if(ZSTD_isError(compressed_bytes)){
-			printf("zstd error: %s\n", ZSTD_getErrorName(compressed_bytes)); // FIXME change to Log
+			SLOG(LOG_ERR,"zstd error: %s\n", ZSTD_getErrorName(compressed_bytes));
 			// we'll fall back to uncompressed
 		} else {
 			return std::string_view(compress_buf, compressed_bytes);

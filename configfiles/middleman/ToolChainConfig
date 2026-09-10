@@ -45,6 +45,7 @@ mon_port 5000                   # remote multicast port to send monitoring messa
 multicast_send_period 5000      # logging & monitoring messages will be sent as a batch once per this period
 alarm_cooldown_ms 1000          # alarms with the same device and message will be limited to this rate
 mon_merge_period 5000           # monitoring messages with the same device and subject will be limited to this rate
+ready_wait_ms 0                 # don't wait for the middleman to connect to us; but doctor... I am the middleman!
 
 ##### Tools To Add #####
 Tools_File configfiles/middleman/ToolsConfig    # list of tools to run and their config files

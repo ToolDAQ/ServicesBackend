@@ -36,7 +36,10 @@ BoostInclude= -I $(Dependencies)/boost_1_66_0/install/include
 PostgresLib= -L $(Dependencies)/libpqxx-7.10.4/install/lib -lpqxx -L `pg_config --libdir` -lpq
 PostgresInclude= -I $(Dependencies)/libpqxx-7.10.4/install/include -I `pg_config --includedir`
 
-Includes=-I $(ToolFrameworkCore)/include/ -I $(ToolDAQFramework)/include/ -I $(SOURCEDIR)/include/ $(ZMQInclude) $(BoostInclude) $(PostgresInclude)
+#SysLogInclude= `pkg-config --cflags libsystemd`
+SysLogLib= `pkg-config --libs libsystemd`
+
+Includes=-I $(ToolFrameworkCore)/include/ -I $(ToolDAQFramework)/include/ -I $(SOURCEDIR)/include/ $(ZMQInclude) $(BoostInclude) $(PostgresInclude) $(SysLogInclude)
 ToolLibraries = $(patsubst %, lib/%, $(filter lib%, $(subst /, , $(wildcard UserTools/*/*.so))))
 LIBRARIES=lib/libDataModel.so lib/libMyTools.so $(ToolLibraries)
 DataModelHEADERS:=$(patsubst %.h, include/%.h, $(filter %.h, $(subst /, ,$(wildcard DataModel/*.h))))
@@ -44,7 +47,7 @@ MyToolHEADERS:=$(patsubst %.h, include/%.h, $(filter %.h, $(subst /, ,$(wildcard
 ToolLibs = $(patsubst %.so, %, $(patsubst lib%, -l%,$(filter lib%, $(subst /, , $(wildcard UserTools/*/*.so)))))
 AlreadyCompiled = $(wildcard UserTools/$(filter-out %.so UserTools , $(subst /, ,$(wildcard UserTools/*/*.so)))/*.cpp)
 SOURCEFILES:=$(patsubst %.cpp, %.o,  $(filter-out $(AlreadyCompiled), $(wildcard src/*.cpp) $(wildcard UserTools/*/*.cpp) $(wildcard DataModel/*.cpp))) $(patsubst %.c, %.o,  $(filter-out $(AlreadyCompiled), $(wildcard src/*.c) $(wildcard UserTools/*/*.c) $(wildcard DataModel/*.c)))
-Libs=-L $(SOURCEDIR)/lib/ -lDataModel -L $(ToolDAQFramework)/lib/ -lToolDAQChain -lDAQDataModelBase  -lDAQLogging -lServiceDiscovery -lDAQStore -L $(ToolFrameworkCore)/lib/ -lToolChain -lMyTools -lDataModelBase -lLogging -lStore -lpthread  $(ToolLibs) -L $(ToolDAQFramework)/lib/ -lToolDAQChain -lDAQDataModelBase  -lDAQLogging -lServiceDiscovery -lDAQStore $(ZMQLib) $(BoostLib) $(PostgresLib)
+Libs=-L $(SOURCEDIR)/lib/ -lDataModel -L $(ToolDAQFramework)/lib/ -lToolDAQChain -lDAQDataModelBase  -lDAQLogging -lServiceDiscovery -lDAQStore -L $(ToolFrameworkCore)/lib/ -lToolChain -lMyTools -lDataModelBase -lLogging -lStore -lpthread  $(ToolLibs) -L $(ToolDAQFramework)/lib/ -lToolDAQChain -lDAQDataModelBase  -lDAQLogging -lServiceDiscovery -lDAQStore $(ZMQLib) $(BoostLib) $(PostgresLib) $(SysLogLib)
 
 
 #.SECONDARY: $(%.o)

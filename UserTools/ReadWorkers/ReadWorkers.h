@@ -54,6 +54,7 @@ class ReadWorkers: public Tool {
 	bool Finalise(); ///< Finalise function used to clean up resources.
 	
 	private:
+	MLogger* logger;
 	static void Thread(Thread_args* args);
 	ReadJobDistributor_args thread_args; ///< args for the child thread that makes jobs for the job queue
 	ReadWorkerMonitoring monitoring_vars;

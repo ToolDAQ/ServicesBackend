@@ -52,6 +52,7 @@ class ReadQueryReceiverReplySender: public Tool {
 	bool Finalise(); ///< Finalise funciton used to clean up resorces.
 	
 	private:
+	MLogger* logger;
 	static void Thread(Thread_args* args);
 	ReadQueryReceiverReplySender_args thread_args;
 	ReadReceiveMonitoring monitoring_vars;

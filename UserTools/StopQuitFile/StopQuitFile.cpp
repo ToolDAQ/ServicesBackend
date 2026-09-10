@@ -7,6 +7,7 @@ bool StopQuitFile::Initialise(std::string configfile, DataModel &data){
   InitialiseTool(data);
   m_configfile = configfile;
   InitialiseConfiguration(configfile);
+  logger=m_data->logger;
   //m_variables.Print();
   LoadConfig();
   
@@ -22,7 +23,7 @@ bool StopQuitFile::Execute(){
   if(test.is_open()){
     test.close();
     if(!stopped){
-      Log("StopFile found, stopping toolchain",v_warning,m_verbose);
+      LOG(logger,LOG_NOTICE,"StopFile found, stopping toolchain");
       m_data->vars.Set("StopLoop",1); // this doesn't work in remote mode
       SendCommand("Stop");
       SendCommand("Quit");
@@ -36,7 +37,7 @@ bool StopQuitFile::Execute(){
   if(test.is_open()){
     test.close();
     if(!quitted){
-      Log("QuitFile found, stopping toolchain",v_warning,m_verbose);
+      LOG(logger,LOG_NOTICE,"QuitFile found, stopping toolchain");
       m_data->vars.Set("StopLoop",1);
       SendCommand("Stop");
       SendCommand("Quit");
@@ -66,14 +67,14 @@ bool StopQuitFile::SendCommand(std::string command){
   memcpy(msg.data(), command.data(), command.length());
   int ok = sock.send(msg);
   if(!ok){
-    Log("SendCommand failed to send '"+command+" with "+zmq_strerror(errno),v_warning,m_verbose);
+    LOG(logger,LOG_ERR,"SendCommand failed to send '%s' with %s",command,zmq_strerror(errno));
     return false;
   }
   usleep(1000);
   zmq::message_t rep;
   ok = sock.recv(&rep);
   if(!ok){
-    Log("SendCommand failed to receive reply to "+command+" with "+zmq_strerror(errno),v_warning,m_verbose);
+    LOG(logger,LOG_ERR,"SendCommand failed to receive reply to '%s' with %s",command,zmq_strerror(errno));
     return false;
   }
   return true;

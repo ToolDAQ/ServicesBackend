@@ -28,9 +28,11 @@ class GracefulStop: public Tool {
 
 
   private:
+  MLogger* logger;
   static void stopSignalHandler(int _ignored);  // we need a function to register as the signal handler
   static bool gotStopSignal;
   bool SendCommand(std::string cmd);
+  std::string StopAndQuit(const char*);
 
 
 

@@ -13,6 +13,7 @@
 #include "ManagedSocket.h"
 #include "query_topics.h"
 #include "type_name_as_string.h" // mostly for debug
+#include "MLogger.h"
 class MonitoringVariables;
 
 /**
@@ -38,6 +39,8 @@ class DataModel : public DAQDataModelBase {
 	DataModel(); ///< Simple constructor
 	
 	Utilities utils; ///< for thread management
+	MLogger m_logger;
+	MLogger* logger;
 	
 	bool change_config; ///< signaller for Tools to reload their configuration variables
 	

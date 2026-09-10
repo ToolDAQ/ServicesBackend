@@ -12,6 +12,7 @@ bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 	InitialiseTool(data);
 	m_configfile = configfile;
 	InitialiseConfiguration(configfile);
+	logger = m_data->logger;
 	//m_variables.Print();
 	
 	/* ----------------------------------------- */
@@ -42,6 +43,10 @@ bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 	// number of database workers - FIXME needs to match concurrency of postgres backend
 	max_workers = 10;
 	m_variables.Get("max_workers", max_workers);
+	max_log_mon_workers = max_workers-2;
+	m_variables.Get("max_log_mon_workers", max_log_mon_workers);
+	LOG(logger,LOG_NOTICE,"Using at most %d of %d total workers for logging and monitoring jobs",max_log_mon_workers,max_workers);
+	
 	
 	ExportConfiguration();
 	
@@ -59,9 +64,11 @@ bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 	
 	thread_args.m_data = m_data;
 	thread_args.monitoring_vars = &monitoring_vars;
+	thread_args.n_log_mon_workers = &n_log_mon_workers;
+	thread_args.max_log_mon_workers = &max_log_mon_workers;
 	thread_args.job_queue = &database_jobqueue;
 	if(!m_data->utils.CreateThread("database_job_distributor", &Thread, &thread_args)){
-		Log("Failed to spawn background thread",v_error,m_verbose);
+		LOG(logger,LOG_ERR,"%s Failed to spawn background thread",m_tool_name.c_str());
 		return false;
 	}
 	m_data->num_threads++;
@@ -87,8 +94,8 @@ bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 		// But will that be thrown now, or only when we try to *use* the connection, for a transaction?
 		// may depend on the connection type... let's just check?
 		if(!test_conn.is_open()){
-			std::cerr<<"pqxx::connection::is_open() returned false after connection attempt"<<std::endl;
-			std::cerr<<"Connection string was: '"<<tmp.str()<<"'"<<std::endl;  // FIXME cerr -> Log
+			LOG(logger,LOG_ERR,"pqxx::connection::is_open() returned false after connection attempt. "
+			                   "Connection string was: '%s'",tmp.str());
 			return false;
 		}
 		// closes connection here on destruction
@@ -96,11 +103,11 @@ bool DatabaseWorkers::Initialise(std::string configfile, DataModel &data){
 		// as usual the doxygen sucks, but it seems this doesn't provide
 		// any further methods to obtain information about the failure mode,
 		// so probably not useful to catch this explicitly.
-		std::cerr << e.what() << std::endl; // FIXME cerr -> Log
+		LOG(logger,LOG_ERR,"%s",e.what());
 		return false;
 	}
 	catch (std::exception const &e){
-		std::cerr << current_exception_name()<<": "<<e.what() << std::endl; // FIXME cerr -> Log
+		LOG(logger,LOG_ERR,"%s: %s",current_exception_name().c_str(), e.what());
 		return false;
 	}
 	
@@ -135,10 +142,10 @@ bool DatabaseWorkers::Execute(){
 	// grab a bunch of entries, and spin off a job for each batch of queries
 	// (possibly doing this several times to spin off multiple jobs)
 	
-	// FIXME ok but actually this kills all our jobs, not just our job distributor
-	// so we don't want to do that.
+	// FIXME this kills all our jobs, not just our job distributor...
+	// perhaps it shouldn't? But still - switch to respawning bg thread w/ KillThread && CreateThread.
 	if(!thread_args.running){
-		Log("Execute found thread not running!",v_error);
+		LOG(logger,LOG_ERR,"%s Execute found thread not running!",m_tool_name.c_str());
 		Finalise();
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		++(monitoring_vars.thread_crashes);
@@ -165,13 +172,13 @@ bool DatabaseWorkers::Execute(){
 bool DatabaseWorkers::Finalise(){
 	
 	// signal job distributor thread to stop
-	Log("Joining job distributor thread",v_warning);
+	LOG(logger,LOG_NOTICE,"%s joining job distributor thread",m_tool_name.c_str());
 	m_data->utils.KillThread(&thread_args);
-	Log("Finished",v_warning);
+	LOG(logger,LOG_NOTICE,"%s distributor thread joined",m_tool_name.c_str());
 	m_data->num_threads--;
 	
 	// deleting the worker pool manager will kill all the worker threads
-	Log("Joining database worker thread pool",v_warning);
+	LOG(logger,LOG_NOTICE,"%s joining database worker thread pool",m_tool_name.c_str());
 	delete job_manager;
 	job_manager = nullptr;
 	m_data->num_threads--;
@@ -179,7 +186,7 @@ bool DatabaseWorkers::Finalise(){
 	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
 	m_data->monitoring_variables.erase(m_tool_name);
 	
-	Log("Finished",v_warning);
+	LOG(logger,LOG_NOTICE,"%s Finished",m_tool_name.c_str());
 	
 	return true;
 }
@@ -200,10 +207,9 @@ void DatabaseWorkers::Thread(Thread_args* args){
 			// N.B. Pool::GetNew will only invoke the constructor if this is a new instance,
 			// (not if it's been used before and then returned to the pool)
 			// so don't pass job-specific variables to the constructor
-			m_args->the_job->data = m_args->job_struct_pool.GetNew(&m_args->job_struct_pool, m_args->m_data, m_args->monitoring_vars);
+			m_args->the_job->data = m_args->job_struct_pool.GetNew(&m_args->job_struct_pool, m_args->m_data, m_args->monitoring_vars, m_args->n_log_mon_workers);
 		} else {
-			// FIXME error
-			std::cerr<<"database_worker Job with non-null data pointer!"<<std::endl;
+			LOG(m_args->m_data->logger,LOG_ERR, "database_worker Job with non-null data pointer!");
 		}
 		
 		m_args->the_job->func = DatabaseJob;
@@ -218,18 +224,27 @@ void DatabaseWorkers::Thread(Thread_args* args){
 	// XXX ok we have flexibility here on how much we want each worker to grab
 	// the more we do in one transaction (one job) the better throughput...
 	// but with possibly greater latency on replies
+	std::unique_lock<std::mutex> locker;
 	
-	// grab logging queries
-	std::unique_lock<std::mutex> locker(m_args->m_data->log_query_queue_mtx);
-	if(!m_args->m_data->log_query_queue.empty()){
-		std::swap(m_args->m_data->log_query_queue, job_data->logging_queue);
-		//printf("DbJobDistributor grabbed %d log batches\n",job_data->logging_queue.size());
-	}
-	
-	// grab monitoring queries
-	locker = std::unique_lock<std::mutex>(m_args->m_data->mon_query_queue_mtx);
-	if(!m_args->m_data->mon_query_queue.empty()){
-		std::swap(m_args->m_data->mon_query_queue, job_data->monitoring_queue);
+	// exclude some workers from handling logging and monitoring queries,
+	// so that we always have a few workers to handle more important stuff.
+	if(m_args->n_log_mon_workers->load()<*(m_args->max_log_mon_workers)){
+		
+		// grab logging queries
+		locker = std::unique_lock<std::mutex>(m_args->m_data->log_query_queue_mtx);
+		if(!m_args->m_data->log_query_queue.empty()){
+			std::swap(m_args->m_data->log_query_queue, job_data->logging_queue);
+			//printf("DbJobDistributor grabbed %d log batches\n",job_data->logging_queue.size());
+		}
+		
+		// grab monitoring queries
+		locker = std::unique_lock<std::mutex>(m_args->m_data->mon_query_queue_mtx);
+		if(!m_args->m_data->mon_query_queue.empty()){
+			std::swap(m_args->m_data->mon_query_queue, job_data->monitoring_queue);
+		}
+		
+	} else {
+		//printf("excluding log/mon jobs as max log/mon workers reached\n");
 	}
 	
 	// if rootplot queries go over multicast, grab those
@@ -271,6 +286,12 @@ void DatabaseWorkers::Thread(Thread_args* args){
 		return;
 	}
 	
+	if(!job_data->logging_queue.empty() || !job_data->monitoring_queue.empty()){
+		++(*m_args->n_log_mon_workers);
+		//printf("incrementing number of log/mon workers to %d/%d\n",
+		//       m_args->n_log_mon_workers->load(),*(m_args->max_log_mon_workers));
+	}
+	
 	//printf("DbJobDistributor making db job!\n");
 	job_data->m_job_name = "database_worker";
 	
@@ -287,8 +308,8 @@ void DatabaseWorkers::DatabaseJobFail(void*& arg){
 	
 	// safety check in case the job somehow fails after returning its args to the pool
 	if(arg==nullptr){
-		std::cerr<<"multicast worker fail with no args"<<std::endl;
-		return; // FIXME log this occurrence?
+		SLOG(LOG_ERR,"multicast worker fail with no args");
+		return;
 	}
 	
 	// FIXME do something here
@@ -313,6 +334,11 @@ void DatabaseWorkers::DatabaseJobFail(void*& arg){
 	DatabaseJobStruct* m_args=static_cast<DatabaseJobStruct*>(arg);
 	std::cerr<<m_args->m_job_name<<" failure"<<std::endl;
 	++(m_args->monitoring_vars->jobs_failed);
+	
+	if(!m_args->logging_queue.empty() || !m_args->monitoring_queue.empty()){
+		--(*m_args->n_log_mon_workers);
+		//printf("log/mon worker failed, decremented number of workers to %d\n",m_args->n_log_mon_workers->load());
+	}
 	
 	//for(QueryBatch* q : m_args->read_queue) q->push_time("DB_spawn");
 	//for(QueryBatch* q : m_args->write_queue) q->push_time("DB_spawn");
@@ -353,7 +379,7 @@ bool DatabaseWorkers::CacheConfigs(const char* alertname, const char* payload){
 		m_data->sc_vars[alertname]->SetValue(payload);
 	} else {
 		// shouldn't really ever happen. This function is only triggered by alerts of the correct name...
-		std::cerr<<"CacheConfigs alert with unexpected alert name '"<<alertname<<"'"<<std::endl;
+		LOG(logger,LOG_WARNING,"CacheConfigs alert with unexpected alert name '%s'",alertname);
 	}
 	return true;
 }
@@ -366,9 +392,8 @@ std::string DatabaseWorkers::CacheConfigs(const char* payload){
 	bool ok = tmp.Get("base_config_id",new_base_config_id);
 	ok = ok && tmp.Get("runmode_config_id",new_runmode_config_id);
 	if(!ok){
-		// FIXME cerr -> Log
 		std::string err = "Error parsing CacheConfigs alert: '"+std::string{payload}+"' does not contain 'base_config_id' and 'runmode_config_id' int keys";
-		std::cerr<<err<<std::endl;
+		LOG(logger,LOG_ERR,"%s",err.c_str());
 		return err;
 	}
 	
@@ -376,7 +401,7 @@ std::string DatabaseWorkers::CacheConfigs(const char* payload){
 		pqxx::connection conn(DatabaseWorkers::connection_string);
 		if(!conn.is_open()){
 			std::string err = "CacheConfigs returned false after connection attempt";
-			std::cerr<<err<<std::endl;
+			LOG(logger,LOG_ERR,"%s",err.c_str());
 			return err;
 		}
 		pqxx::work tx(conn);
@@ -394,7 +419,7 @@ std::string DatabaseWorkers::CacheConfigs(const char* payload){
 		/*
 		// to accommodate James' base/runmode config entry format:
 		// [{"device":"mydev", "version":X}, {"device":"mydev2", "version":Y} ...]
-		// FIXME this doesn't work: || with JSON arrays appends them, so runmode entries don't override base ones.
+		// N.B this doesn't work: || with JSON arrays appends them, so runmode entries don't override base ones.
 		std::string query = "WITH base AS ( SELECT data FROM base_config WHERE config_id=$1), "
 		                    "  runmode AS ( SELECT data FROM runmode_config WHERE config_id=$2), "
 		                    "   merged AS ( SELECT base.data || runmode.data AS data FROM base CROSS JOIN runmode), "
@@ -409,7 +434,7 @@ std::string DatabaseWorkers::CacheConfigs(const char* payload){
 		std::swap(cached_configs, m_data->cached_configs);
 		m_base_config_id = new_base_config_id;
 		m_runmode_config_id = new_runmode_config_id;
-		// FIXME for the time being we have a hack in TestAlerts that handles RunStart alert
+		// FIXME for the time being we have a hack in TestAlerts that handles run entry creations
 		// and it needs the config ids
 		m_data->vars.Set("base_config_id",m_base_config_id);
 		m_data->vars.Set("runmode_config_id",m_runmode_config_id);
@@ -418,11 +443,11 @@ std::string DatabaseWorkers::CacheConfigs(const char* payload){
 		// as usual the doxygen sucks, but it seems this doesn't provide
 		// any further methods to obtain information about the failure mode,
 		// so probably not useful to catch this explicitly.
-		std::cerr << e.what() << std::endl; // FIXME cerr -> Log
+		LOG(logger,LOG_ERR,"%s",e.what());
 		return e.what();
 	}
 	catch(std::exception& e){
-		std::cerr << e.what() << std::endl; // FIXME cerr -> Log
+		LOG(logger,LOG_ERR,"%s",e.what());
 		return e.what();
 	}
 	//  connection closes on destruction
@@ -443,7 +468,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 	if(conn==nullptr){
 		conn.reset(new pqxx::connection(DatabaseWorkers::connection_string));
 		if(!conn){
-			//Log("Failed to open connection to database for worker thread!",v_error); // FIXME logging
+			LOG(m_args->m_data->logger,LOG_ERR,"Failed to open connection to database for worker thread!");
 			// FIXME terminate this worker... m_args->running=false?
 			return false;
 		} else {
@@ -532,7 +557,8 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 					++(m_args->monitoring_vars->readquery_submissions_failed);
 					query.result.clear();
 					query.err = current_exception_name()+": "+e.what(); // store info about what failed
-					std::cerr<<"dbworker read query '"<<query.msg()<<"' failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
+					LOG(m_args->m_data->logger,LOG_ERR,"dbworker read query '%.*s' failed with %s: %s",
+					    query.msg().size(), query.msg().data(), current_exception_name().c_str(),e.what());
 					
 					// all subsequent queries will have failed, so we need to break here and re-sumbit them
 					m_args->pipeline_error = true;
@@ -555,8 +581,7 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 		// sanity check
 		if(!px->empty()){
 			// pipeline is somehow still not empty even after we should have retrieved everything...??
-			std::cerr<<"dbworker pipeline has surplus results?!"<<std::endl;
-			// FIXME log error
+			LOG(m_args->m_data->logger,LOG_ERR,"dbworker pipeline has surplus results?!");
 			
 			// FIXME uhhhh do something...?
 			px->flush(); // cancel pending queries and discard results... i guess??
@@ -616,11 +641,11 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 					++(m_args->monitoring_vars->generic_submissions_failed);
 					query.result.clear();
 					query.err = current_exception_name()+": "+e.what();
-					std::cerr<<"dbworker generic query '"<<query.msg()<<"' failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
+					LOG(m_args->m_data->logger,LOG_ERR,"dbworker generic query '%.*s' failed with %s: %s",
+					    query.msg().size(), query.msg().data(), current_exception_name().c_str(), e.what());
 					//pqxx::sql_error* sqle = dynamic_cast<pqxx::sql_error*>(&e);
 					//if(sqle) std::cerr<<"SQLSTATE is now "<<sqle->sqlstate()<<std::endl;
 					// https://www.postgresql.org/docs/current/errcodes-appendix.html
-					// FIXME log the error here
 					m_args->checkpoint_i = i+1;
 					m_args->checkpoint_j = j;
 					m_args->had_error=true;
@@ -648,9 +673,10 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				++(m_args->monitoring_vars->logging_submissions);
 				m_args->monitoring_vars->logging_bytes += batch->length();
 			} catch (std::exception& e){
-				std::cerr<<"dbworker log insert failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
+				LOG(m_args->m_data->logger,LOG_ERR,"dbworker log insert '%s' failed with %s: %s",
+				    /*batch->c_str()*/"[omitted]", current_exception_name().c_str(), e.what());
+				// ^ prevent circular errors - don't log a logging message that couldn't be logged
 				++(m_args->monitoring_vars->logging_submissions_failed);
-				// FIXME log the error here
 				// FIXME if we catch (pqxx::sql_error const &e) or others can we get better information?
 				// after error the transaction becomes unusable, and we must open a new one
 				m_args->bad_logs.emplace(i);
@@ -679,9 +705,8 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				m_args->monitoring_vars->monitoring_bytes += batch->length();
 			} catch (std::exception& e){
 				++(m_args->monitoring_vars->monitoring_submissions_failed);
-				std::cerr<<"dbworker mon insert failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
-				std::cerr<<"batch: '"<<*batch<<"'"<<std::endl;
-				// FIXME log the error here
+				LOG(m_args->m_data->logger,LOG_ERR,"dbworker mon insert '%s' failed with %s: %s",
+				    batch->c_str(),current_exception_name().c_str(), e.what());
 				m_args->bad_mons.emplace(i);
 				m_args->checkpoint_i = i;
 				m_args->had_error=true;
@@ -707,8 +732,8 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				++(m_args->monitoring_vars->rootplot_submissions);
 			} catch (std::exception& e){
 				++(m_args->monitoring_vars->rootplot_submissions_failed);
-				std::cerr<<"dbworker rootplot insert failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
-				// FIXME log the error here
+				LOG(m_args->m_data->logger,LOG_ERR,"dbworker rootplot insert '%s' failed with %s: %s",
+				    batch->c_str(),current_exception_name().c_str(), e.what());
 				m_args->bad_rootplots.emplace(i);
 				m_args->checkpoint_i = i;
 				m_args->had_error=true;
@@ -734,8 +759,8 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				++(m_args->monitoring_vars->plotlyplot_submissions);
 			} catch (std::exception& e){
 				++(m_args->monitoring_vars->plotlyplot_submissions_failed);
-				std::cerr<<"dbworker plotlyplot insert failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
-				// FIXME log the error here
+				LOG(m_args->m_data->logger,LOG_ERR,"dbworker plotlyplot insert '%s' failed with %s: %s",
+				    batch->c_str(),current_exception_name().c_str(), e.what());
 				m_args->bad_plotlyplots.emplace(i);
 				m_args->checkpoint_i = i;
 				m_args->had_error=true;
@@ -766,8 +791,8 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				} catch (std::exception& e){
 					batch->alarm_batch_err = current_exception_name()+": "+e.what();
 					++(m_args->monitoring_vars->alarm_submissions_failed);
-					std::cerr<<"dbworker alarm batch '"<<batch->alarm_buffer<<"' insert failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
-					// FIXME log the error here
+					LOG(m_args->m_data->logger,LOG_ERR,"dbworker alarm insert '%s' failed with %s: %s",
+					    batch->alarm_buffer.c_str(),current_exception_name().c_str(), e.what());
 					m_args->checkpoint_i = i+1;
 					m_args->had_error=true;
 					delete tx;
@@ -793,8 +818,8 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				} catch (std::exception& e){
 					++(m_args->monitoring_vars->devconfig_submissions_failed);
 					batch->devconfig_batch_err = current_exception_name()+": "+e.what();
-					std::cerr<<"dbworker devconfig insert '"<<batch->devconfig_buffer<<"' failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
-					// FIXME log the error here
+					LOG(m_args->m_data->logger,LOG_ERR,"dbworker dev_config insert '%s' failed with %s: %s",
+					    batch->devconfig_buffer.c_str(),current_exception_name().c_str(), e.what());
 					m_args->checkpoint_i = i+1;
 					m_args->had_error=true;
 					delete tx;
@@ -814,8 +839,8 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				} catch (std::exception& e){
 					++(m_args->monitoring_vars->base_config_submissions_failed);
 					batch->base_config_batch_err = current_exception_name()+": "+e.what();
-					std::cerr<<"dbworker base_config insert '"<<batch->base_config_buffer<<"' failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
-					// FIXME log the error here
+					LOG(m_args->m_data->logger,LOG_ERR,"dbworker base_config insert '%s' failed with %s: %s",
+					    batch->base_config_buffer.c_str(),current_exception_name().c_str(), e.what());
 					m_args->checkpoint_i = i+1;
 					m_args->had_error=true;
 					delete tx;
@@ -835,8 +860,8 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				} catch (std::exception& e){
 					++(m_args->monitoring_vars->runmode_config_submissions_failed);
 					batch->runmode_config_batch_err = current_exception_name()+": "+e.what();
-					std::cerr<<"dbworker runmode_config insert '"<<batch->runmode_config_buffer<<"' failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
-					// FIXME log the error here
+					LOG(m_args->m_data->logger,LOG_ERR,"dbworker runmode_config insert '%s' failed with %s: %s",
+					    batch->runmode_config_buffer.c_str(),current_exception_name().c_str(), e.what());
 					m_args->checkpoint_i = i+1;
 					m_args->had_error=true;
 					delete tx;
@@ -856,8 +881,8 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				} catch (std::exception& e){
 					++(m_args->monitoring_vars->calibration_submissions_failed);
 					batch->calibration_batch_err = current_exception_name()+": "+e.what();
-					std::cerr<<"dbworker calibration insert '"<<batch->calibration_buffer<<"' failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
-					// FIXME log the error here
+					LOG(m_args->m_data->logger,LOG_ERR,"dbworker calibration insert '%s' failed with %s: %s",
+					    batch->calibration_buffer.c_str(),current_exception_name().c_str(), e.what());
 					m_args->checkpoint_i = i+1;
 					m_args->had_error=true;
 					delete tx;
@@ -877,8 +902,8 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				} catch (std::exception& e){
 					++(m_args->monitoring_vars->rootplot_submissions_failed);
 					batch->rootplot_batch_err = current_exception_name()+": "+e.what();
-					std::cerr<<"dbworker rootplot insert '"<<batch->rootplot_buffer<<"' failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
-					// FIXME log the error here
+					LOG(m_args->m_data->logger,LOG_ERR,"dbworker rootplot insert '%s' failed with %s: %s",
+					    batch->rootplot_buffer.c_str(),current_exception_name().c_str(), e.what());
 					m_args->checkpoint_i = i+1;
 					m_args->had_error=true;
 					delete tx;
@@ -898,8 +923,8 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 				} catch (std::exception& e){
 					++(m_args->monitoring_vars->plotlyplot_submissions_failed);
 					batch->plotlyplot_batch_err = current_exception_name()+": "+e.what();
-					std::cerr<<"dbworker plotlyplot insert '"<<batch->plotlyplot_buffer<<"' failed with "<<current_exception_name()<<": "<<e.what()<<std::endl;
-					// FIXME log the error here
+					LOG(m_args->m_data->logger,LOG_ERR,"dbworker plotlyplot insert '%s' failed with %s: %s",
+					    batch->plotlyplot_buffer.c_str(),current_exception_name().c_str(), e.what());
 					m_args->checkpoint_i = i+1;
 					m_args->had_error=true;
 					delete tx;
@@ -923,7 +948,8 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 			// basically this means the transaction may have commited or not, pqxx is not sure.
 			// it's up to us to figure that out, perhaps by querying for the last inserted record
 			// FIXME for now, we leave that as a problem for another day...
-			std::cerr<<"dbworker caught "<<current_exception_name()<<": "<<e.what()<<" committing transaction!"<<std::endl;
+			LOG(m_args->m_data->logger,LOG_ERR,"dbworker caught %s: %s committing transaction!",
+			    current_exception_name().c_str(), e.what());
 			throw std::runtime_error(R"(¯\_(ツ)_/¯)");
 			
 		} catch(std::exception& e){
@@ -964,6 +990,11 @@ bool DatabaseWorkers::DatabaseJob(void*& arg){
 	
 	//printf("%s completed\n",m_args->m_job_name.c_str());
 	++(m_args->monitoring_vars->jobs_completed);
+	
+	if(!m_args->logging_queue.empty() || !m_args->monitoring_queue.empty()){
+		--(*m_args->n_log_mon_workers);
+		//printf("log/mon worker done, decremented number of workers to %d\n",m_args->n_log_mon_workers->load());
+	}
 	
 	// return our job args to the pool
 	m_args->m_pool->Add(m_args);  // return our job args to the job args struct pool

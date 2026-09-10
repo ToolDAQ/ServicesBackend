@@ -30,6 +30,7 @@ class StopQuitFile: public Tool {
   
   
   private:
+  MLogger* logger;
   std::string stop_file;
   std::string quit_file;
   std::ifstream test;

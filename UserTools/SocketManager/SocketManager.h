@@ -47,6 +47,7 @@ class SocketManager: public Tool {
 	SocketManagerMonitoring monitoring_vars;
 	std::string ClearClients(const char*);
 	std::string DisconnectAllClients(const char*);
+	std::string DisconnectClient(const char* client);
 	
 	std::timed_mutex thread_mtx;
 	
@@ -54,6 +55,7 @@ class SocketManager: public Tool {
 	std::atomic<bool> new_clients=false;
 	std::map<std::string,std::string> clientsmap;
 	std::chrono::time_point<std::chrono::steady_clock> last_exec;
+	MLogger* logger;
 	
 };
 

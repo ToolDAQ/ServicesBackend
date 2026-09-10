@@ -7,6 +7,7 @@ bool ReadQueryReceiverReplySender::Initialise(std::string configfile, DataModel 
 	InitialiseTool(data);
 	m_configfile = configfile;
 	InitialiseConfiguration(configfile);
+	logger = m_data->logger;
 	//m_variables.Print();
 	
 	if(!m_variables.Get("verbose",m_verbose)) m_verbose=1;
@@ -62,7 +63,7 @@ bool ReadQueryReceiverReplySender::Initialise(std::string configfile, DataModel 
 	try{
 		managed_socket->socket->setsockopt(ZMQ_ROUTER_HANDOVER, 1);
 	} catch(std::exception& e){
-		std::cout<<"caught "<<e.what()<<" in setsockopt "<<ZMQ_ROUTER_HANDOVER<<std::endl;
+		LOG(logger,LOG_ERR,"caught %s in setsockopt(ZMQ_ROUTER_HANDOVER)",e.what());
 		throw;
 	}
 	*/
@@ -96,7 +97,7 @@ bool ReadQueryReceiverReplySender::Initialise(std::string configfile, DataModel 
 	
 	// thread needs a unique name
 	if(!m_data->utils.CreateThread("readrep_sendreceiver", &Thread, &thread_args)){
-		Log("Failed to spawn background thread",v_error,m_verbose);
+		LOG(logger,LOG_ERR,"Failed to spawn %s background thread",m_tool_name.c_str());
 		return false;
 	}
 	m_data->num_threads++;
@@ -108,7 +109,7 @@ bool ReadQueryReceiverReplySender::Initialise(std::string configfile, DataModel 
 bool ReadQueryReceiverReplySender::Execute(){
 	
 	if(!thread_args.running){
-		Log("Execute found thread not running!",v_error);
+		LOG(logger,LOG_ERR,"%s Execute found background thread not running!",m_tool_name.c_str());
 		Finalise();
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		++(monitoring_vars.thread_crashes);
@@ -122,9 +123,9 @@ bool ReadQueryReceiverReplySender::Execute(){
 bool ReadQueryReceiverReplySender::Finalise(){
 	
 	// signal background receiver thread to stop
-	Log("Joining receiver thread",v_warning);
+	LOG(logger,LOG_NOTICE,"%s Joining receiver thread",m_tool_name.c_str());
 	m_data->utils.KillThread(&thread_args);
-	Log("thread terminated",v_warning);
+	LOG(logger,LOG_NOTICE,"%s thread terminated",m_tool_name.c_str());
 	m_data->num_threads--;
 	
 	std::unique_lock<std::shared_mutex> locker(m_data->managed_sockets_mtx);
@@ -138,7 +139,7 @@ bool ReadQueryReceiverReplySender::Finalise(){
 	std::unique_lock<std::mutex> locker2(m_data->monitoring_variables_mtx);
 	m_data->monitoring_variables.erase(m_tool_name);
 	
-	Log("Finished",v_warning);
+	LOG(logger,LOG_NOTICE,"%s Finished",m_tool_name.c_str());
 	return true;
 }
 
@@ -189,7 +190,7 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 	} catch(zmq::error_t& err){
 		// ignore poll aborting due to signals
 		if(zmq_errno()==EINTR) return; // this is probably fine
-		std::cerr<<m_args->m_tool_name<<" in poll caught "<<err.what()<<std::endl;
+		LOG(m_args->m_data->logger,LOG_WARNING,"poll caught %s",err.what());
 		++(m_args->monitoring_vars->polls_failed);
 		if(zmq_errno()==ETERM) m_args->running=false; // context terminated
 //		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
@@ -197,20 +198,20 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 		return;
 	}
 	catch(std::exception& err){
-		std::cerr<<m_args->m_tool_name<<" in poll caught "<<err.what()<<std::endl;
+		LOG(m_args->m_data->logger,LOG_WARNING,"poll caught %s",err.what());
 		++(m_args->monitoring_vars->polls_failed);
 //		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 		usleep(10);
 		return;
 	} catch(...){
-		std::cerr<<m_args->m_tool_name<<" in poll caught "<<strerror(errno)<<std::endl;
+		LOG(m_args->m_data->logger,LOG_WARNING,"poll caught %s",strerror(errno));
 		++(m_args->monitoring_vars->polls_failed);
 //		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 		usleep(10);
 		return;
 	}
 	if(m_args->get_ok<0){
-		std::cerr<<m_args->m_tool_name<<" in poll failed with "<<zmq_strerror(errno)<<std::endl;
+		LOG(m_args->m_data->logger,LOG_WARNING,"poll failed with %s",zmq_strerror(errno));
 		++(m_args->monitoring_vars->polls_failed);
 //		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 		usleep(10);
@@ -251,20 +252,16 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 			// if the read failed, discard the message
 			if(!m_args->get_ok){
 				
-				std::cerr<<m_args->m_tool_name<<" receive failed with "<<zmq_strerror(errno)<<std::endl;
+				LOG(m_args->m_data->logger,LOG_ERR,"receive failed with %s",zmq_strerror(errno));
 				++(m_args->monitoring_vars->rcv_fails);
 				
 			// if there weren't 4 parts, discard the message
 			} else if(m_args->msg_parts!=4){
 				
-				std::cerr<<m_args->m_tool_name<<": Unexpected "<<m_args->msg_parts<<" part message"<<std::endl;
-				for(int i=0; i<std::min(4,m_args->msg_parts); ++i){
-					char msg_str[msg_buf[part_order[i]].size()+1];
-					msg_str[msg_buf[part_order[i]].size()]='\0';
-					if(msg_buf[part_order[i]].size()) snprintf(&msg_str[0], msg_buf[part_order[i]].size(), "%s", msg_buf[part_order[i]].data());
-					printf("\tpart %d: %s\n",i, msg_str);
+				LOG(m_args->m_data->logger,LOG_WARNING,"unexpected %lu part message",m_args->msg_parts);
+				for(int i=0; i<m_args->msg_parts; ++i){
+					LOG(m_args->m_data->logger,LOG_INFO,"part %d: %.*s\n",i, msg_buf[i].size(), msg_buf[i].data());
 				}
-				// FIXME Log this? here? do we add a flag for bad and do it in the processing?
 				++(m_args->monitoring_vars->bad_msgs);
 				
 			// else success
@@ -273,23 +270,23 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 				m_args->make_new=true;
 				++(m_args->monitoring_vars->msgs_rcvd);
 				// XXX
-				//printf("%s received query %u, '%s' message '%.*s' into ZmqQuery at %p\n",m_args->m_tool_name.c_str(), msg_buf.msg_id(), msg_buf.topic().data(), msg_buf.msg_raw().size(), msg_buf.msg_raw().data(), &msg_buf);
+				//printf("%s received query %u, '%.*s' message '%.*s' into ZmqQuery at %p\n",m_args->m_tool_name.c_str(), msg_buf.msg_id(), msg_buf.topic().size(), msg_buf.topic().data(), msg_buf.msg_raw().size(), msg_buf.msg_raw().data(), &msg_buf);
 				
 			}
 			
 		} catch(zmq::error_t& err){
 			// receive aborted due to signals?
 			if(zmq_errno()==EINTR) return; // FIXME this is probably not appropriate: should resume receive?
-			std::cerr<<m_args->m_tool_name<<" receive caught "<<err.what()<<std::endl;
+			LOG(m_args->m_data->logger,LOG_ERR,"receive caught %s",err.what());
 			++(m_args->monitoring_vars->rcv_fails);
 //			m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 			if(zmq_errno()==ETERM) m_args->running=false; // context terminated
 		} catch(std::exception& err){
-			std::cerr<<m_args->m_tool_name<<" receive caught "<<err.what()<<std::endl;
+			LOG(m_args->m_data->logger,LOG_ERR,"receive caught %s",err.what());
 			++(m_args->monitoring_vars->rcv_fails);
 //			m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 		} catch(...){
-			std::cerr<<m_args->m_tool_name<<" receive caught "<<strerror(errno)<<std::endl;
+			LOG(m_args->m_data->logger,LOG_ERR,"receive caught %s",strerror(errno));
 			++(m_args->monitoring_vars->rcv_fails);
 //			m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 		}
@@ -313,24 +310,24 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 		} catch(zmq::error_t& err){
 			// ignore poll aborting due to signals
 			if(zmq_errno()==EINTR) return; // this is probably fine
-			std::cerr<<m_args->m_tool_name<<" out poll caught "<<err.what()<<std::endl;
+			LOG(m_args->m_data->logger,LOG_WARNING,"out poll caught %s",err.what());
 			++(m_args->monitoring_vars->polls_failed);
 	//		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 			return;
 		}
 		catch(std::exception& err){
-			std::cerr<<m_args->m_tool_name<<" out poll caught "<<err.what()<<std::endl;
+			LOG(m_args->m_data->logger,LOG_WARNING,"out poll caught %s",err.what());
 			++(m_args->monitoring_vars->polls_failed);
 	//		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 			return;
 		} catch(...){
-			std::cerr<<m_args->m_tool_name<<" out poll caught "<<strerror(errno)<<std::endl;
+			LOG(m_args->m_data->logger,LOG_WARNING,"out poll caught %s",strerror(errno));
 			++(m_args->monitoring_vars->polls_failed);
 	//		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 			return;
 		}
 		if(m_args->get_ok<0){
-			std::cerr<<m_args->m_tool_name<<" out poll failed with "<<zmq_strerror(errno)<<std::endl;
+			LOG(m_args->m_data->logger,LOG_WARNING,"out poll failed with %s",zmq_strerror(errno));
 			++(m_args->monitoring_vars->polls_failed);
 	//		m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 			return;
@@ -369,14 +366,14 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 				
 				std::unique_lock<std::mutex> locker(m_args->mgd_sock->socket_mtx);
 				for(size_t i=0; i<rep.size()-1; ++i){
-						m_args->get_ok = m_args->mgd_sock->socket->send(rep[i], ZMQ_SNDMORE);
-						if(!m_args->get_ok) break;
+					m_args->get_ok = m_args->mgd_sock->socket->send(rep[i], ZMQ_SNDMORE);
+					if(!m_args->get_ok) break;
 				}
 				if(m_args->get_ok) m_args->get_ok = m_args->mgd_sock->socket->send(rep[rep.size()-1]);
 				locker.unlock();
 				
 				if(!m_args->get_ok){
-					std::cerr<<m_args->m_tool_name<<": send failed with "<<zmq_strerror(errno)<<std::endl;
+					LOG(m_args->m_data->logger,LOG_ERR,"send failed with %s",zmq_strerror(errno));
 					++(m_args->monitoring_vars->send_fails); // FIXME or move into below if we retry? or track both?
 					/*
 					if(next_msg.retries>=max_send_attempts){
@@ -397,15 +394,15 @@ void ReadQueryReceiverReplySender::Thread(Thread_args* args){
 			} catch(zmq::error_t& err){
 				// send aborted due to signals?
 				if(zmq_errno()==EINTR) return; // FIXME is this appropriate here?
-				std::cerr<<m_args->m_tool_name<<" send caught "<<err.what()<<std::endl; // FIXME better logging
+				LOG(m_args->m_data->logger,LOG_ERR,"send caught %s",err.what());
 				++(m_args->monitoring_vars->send_fails);
 //				m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
-			} catch(std::exception& e){
-				std::cerr<<m_args->m_tool_name<<" send caught "<<e.what()<<std::endl;
+			} catch(std::exception& err){
+				LOG(m_args->m_data->logger,LOG_ERR,"send caught %s",err.what());
 				++(m_args->monitoring_vars->send_fails);
 //				m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 			} catch(...){
-				std::cerr<<m_args->m_tool_name<<" send caught "<<strerror(errno)<<std::endl;
+				LOG(m_args->m_data->logger,LOG_ERR,"send caught %s",strerror(errno));
 				++(m_args->monitoring_vars->send_fails);
 //				m_args->running=false; // FIXME Handle other errors? or just globally via restarting thread? or throw?
 			}

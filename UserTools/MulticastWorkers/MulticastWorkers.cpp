@@ -7,6 +7,7 @@ bool MulticastWorkers::Initialise(std::string configfile, DataModel &data){
 	InitialiseTool(data);
 	m_configfile = configfile;
 	InitialiseConfiguration(configfile);
+	logger = m_data->logger;
 	//m_variables.Print();
 	
 //	// allocate ehhh 60% of the CPU to multicast workers
@@ -29,7 +30,7 @@ bool MulticastWorkers::Initialise(std::string configfile, DataModel &data){
 	thread_args.monitoring_vars = &monitoring_vars;
 	// thread needs a unique name
 	if(!m_data->utils.CreateThread("multicast_job_distributor", &Thread, &thread_args)){
-		Log("Failed to spawn background thread",v_error,m_verbose);
+		LOG(logger,LOG_ERR,"Failed to spawn %s background thread",m_tool_name.c_str());
 		return false;
 	}
 	m_data->num_threads++;
@@ -44,7 +45,7 @@ bool MulticastWorkers::Execute(){
 	// FIXME ok but actually this kills all our jobs, not just our job distributor
 	// so we don't want to do that.
 	if(!thread_args.running){
-		Log("Execute found thread not running!",v_error);
+		LOG(logger,LOG_ERR,"%s Execute found thread not running!",m_tool_name.c_str());
 		Finalise();
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		++(monitoring_vars.thread_crashes);
@@ -70,7 +71,7 @@ bool MulticastWorkers::Execute(){
 bool MulticastWorkers::Finalise(){
 	
 	// signal job distributor thread to stop
-	Log("Joining receiver thread",v_warning);
+	LOG(logger,LOG_NOTICE,"%s Joining receiver thread",m_tool_name.c_str());
 	m_data->utils.KillThread(&thread_args);
 	m_data->num_threads--;
 	
@@ -80,7 +81,7 @@ bool MulticastWorkers::Finalise(){
 	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
 	m_data->monitoring_variables.erase(m_tool_name);
 	
-	Log("Finished",v_warning);
+	LOG(logger,LOG_NOTICE,"%s Finished",m_tool_name.c_str());
 	return true;
 }
 
@@ -115,7 +116,7 @@ void MulticastWorkers::Thread(Thread_args* args){
 			the_job->data = m_args->job_struct_pool.GetNew(&m_args->job_struct_pool, m_args->m_data, m_args->monitoring_vars);
 		} else {
 			// this should never happen as jobs should return their args to the pool
-			std::cerr<<"Multicast Job with non-null data pointer!"<<std::endl;
+			LOG(m_args->m_data->logger,LOG_ERR,"Multicast Job with non-null data pointer!");
 			// FIXME ... do we assume this job args object is valid, and use it?
 			// this could lead to a segfault (if the args got returned to the pool and deleted)
 			// or corruption (if the args got returned to the pool and given to another job)
@@ -151,11 +152,11 @@ void MulticastWorkers::MulticastMessageFail(void*& arg){
 	// safety check in case the job somehow fails after returning its args to the pool
 	if(arg==nullptr){
 		std::cerr<<"multicast worker fail with no args"<<std::endl;
-		return; // FIXME log this occurrence?
+		return;
 	}
 	
 	MulticastJobStruct* m_args=static_cast<MulticastJobStruct*>(arg);
-	std::cerr<<m_args->m_job_name<<" failure"<<std::endl;
+	LOG(m_args->m_data->logger,LOG_ERR,"%s job failure",m_args->m_job_name);
 	++(m_args->monitoring_vars->jobs_failed);
 	
 	// return the vector of string buffers to the pool for re-use by MulticastReceiverSender Tool
@@ -222,20 +223,20 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 			// compressed - decompress it
 			m_args->decompressed_bytes = ZSTD_getFrameContentSize(next_msg.data(), next_msg.size());
 			if(m_args->decompressed_bytes==ZSTD_CONTENTSIZE_UNKNOWN || m_args->decompressed_bytes==ZSTD_CONTENTSIZE_ERROR){
-				// bad message, discard // FIXME log it
-//				printf("%s ignoring zstd bad multicast message '%s'\n",m_args->m_job_name.c_str(), next_msg.c_str());
+				// bad message, discard
+				LOG(m_args->m_data->logger,LOG_WARNING,"%s ignoring zstd bad multicast message '%s'\n",
+				    m_args->m_job_name.c_str(), ZSTD_getErrorName(m_args->decompressed_bytes)/*next_msg.c_str()*/);
 				continue;
 			}
 			if(m_args->decompressed_bytes > MAX_DECOMPRESSED_MSG_SIZE){
-				printf("%s ignoring zstd message requesting excessive '%lu' byte decompression buffer\n",
-				       m_args->m_job_name.c_str(), m_args->decompressed_bytes);
+				LOG(m_args->m_data->logger,LOG_WARNING,"%s ignoring zstd message requesting excessive '%lu' byte decompression buffer\n",m_args->m_job_name.c_str(), m_args->decompressed_bytes);
 				continue;
 			}
 			m_args->decompress_buffer.resize(m_args->decompressed_bytes);
 			m_args->decompressed_bytes = ZSTD_decompressDCtx(zstd_ctx.get(),(void*)m_args->decompress_buffer.data(),m_args->decompressed_bytes, next_msg.data(), next_msg.size());
 			if(ZSTD_isError(m_args->decompressed_bytes)){
-				printf("%s error decompressing zstd message: %s\n", // FIXME is it even useful to log these?
-				       m_args->m_job_name.c_str(), ZSTD_getErrorName(m_args->decompressed_bytes));
+				LOG(m_args->m_data->logger,LOG_WARNING,"%s error decompressing zstd message: %s\n",
+				    m_args->m_job_name.c_str(), ZSTD_getErrorName(m_args->decompressed_bytes));
 				continue;
 			}
 			m_args->the_msg = std::string_view(m_args->decompress_buffer.c_str(),m_args->decompressed_bytes);
@@ -250,8 +251,8 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 		// so we don't need to parse the message to identify the topic:
 //		printf("validating first 9 chars are topic: '%s', %d\n",m_args->the_msg.substr(0,9).c_str(),strcmp(m_args->the_msg.substr(0,9).c_str(),"{\"topic\":"));
 		if(m_args->the_msg.substr(0,9)!="{\"topic\":"){
-			// FIXME log it as bad multicast
-//			printf("%s ignoring bad multicast message '%.*s'\n",m_args->m_job_name.c_str(), m_args->the_msg.size(), m_args->the_msg.data());
+			LOG(m_args->m_data->logger,LOG_WARNING,"%s ignoring bad multicast message '%.*s'\n",
+			    m_args->m_job_name.c_str(), m_args->the_msg.size(), m_args->the_msg.data());
 			continue;
 		}
 		
@@ -271,8 +272,9 @@ bool MulticastWorkers::MulticastMessageJob(void*& arg){
 				m_args->out_buffer = m_args->plotlyplot_buffer;
 				break;
 			default:
-				printf("%s unknown multicast topic '%c' in message '%.*s'\n",m_args->m_job_name.c_str(), (m_args->the_msg)[10],m_args->the_msg.size(), m_args->the_msg.data());
-				continue; // FIXME unknown topic: error log it.
+				LOG(m_args->m_data->logger,LOG_WARNING,"%s unknown multicast topic '%c' in message '%.*s'\n",
+				    m_args->m_job_name.c_str(), (m_args->the_msg)[10],m_args->the_msg.size(), m_args->the_msg.data());
+				continue;
 		}
 		
 		// FIXME can we make this use moving write-head instead of copying?

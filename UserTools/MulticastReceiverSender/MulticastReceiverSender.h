@@ -62,6 +62,7 @@ class MulticastReceiverSender: public Tool {
 	bool Finalise(); ///< Finalise funciton used to clean up resorces.
 	
 	private:
+	MLogger* logger;
 	static void Thread(Thread_args* args);
 	MulticastReceive_args thread_args;
 	MulticastReceiveMonitoring monitoring_vars;
