@@ -8,6 +8,7 @@ RUN yum install -y       \
     emacs                \
     iputils              \
     iproute              \
+    systemd-devel        \
     python3-psycopg2     \
     && yum clean all     \
     && rm -rf /var/cache/yum
@@ -21,6 +22,8 @@ RUN dnf --enablerepo=crb install -y \
     && dnf install -y     \
     postgresql18-server   \
     postgresql18-devel    \
+    clang                 \
+    llvm                  \
     libpq-devel           \
     openssl-devel         \
     libcurl-devel         \
