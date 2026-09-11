@@ -1,0 +1,2 @@
+# verbosity for the toolchain; controls multicast and printf logging level
+verbosity 1

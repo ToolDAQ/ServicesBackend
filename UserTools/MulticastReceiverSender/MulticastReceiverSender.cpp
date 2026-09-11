@@ -44,7 +44,7 @@ bool MulticastReceiverSender::Initialise(std::string configfile, DataModel &data
 		if(type_str=="logging") multicast_address = "239.192.1.2";
 		else multicast_address = "239.192.1.3";
 	}
-	LOG(logger,LOG_NOTICE,"listening for %s traffic on %s:%d",type_str.c_str(), multicast_address,port);
+	LOG(logger,LOG_NOTICE,"listening for %s traffic on %s:%d",type_str.c_str(), multicast_address.c_str(),port);
 	
 	std::string out_interface_address="";
 	if(!m_variables.Get("multicast_out_address",out_interface_address)){

@@ -24,5 +24,6 @@ if (tool=="StopQuitFile") ret=new StopQuitFile;
 if (tool=="GracefulStop") ret=new GracefulStop;
 
 
+  if (tool=="SetVerbosity") ret=new SetVerbosity;
 return ret;
 }

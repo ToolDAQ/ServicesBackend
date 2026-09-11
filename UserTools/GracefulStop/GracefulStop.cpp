@@ -75,13 +75,13 @@ bool GracefulStop::SendCommand(std::string command){
     LOG(logger,LOG_ERR,"SendCommand failed to send '%s' with %s",command.c_str(),zmq_strerror(errno));
     return false;
   }
+  usleep(1000);
   /*
   // RemoteControl commands get received and handled in the main thread - i.e. the same thread
   // this function is running on. That means we're not gonna get a response until the next toolchain
   // execution (which will never happen, as we've asked for a Stop). So no point waiting for the reply.
   // N.B. for StopAndQuit, if we did the send/receive there it would work, since SlowControlCollection
   // runs callbacks on a different thread.
-  usleep(1000);
   zmq::message_t rep;
   ok = sock.recv(&rep);
   if(!ok){
