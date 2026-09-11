@@ -8,6 +8,7 @@ bool JobManager::Initialise(std::string configfile, DataModel &data){
 	InitialiseTool(data);
 	m_configfile = configfile;
 	InitialiseConfiguration(configfile);
+	logger = m_data->logger;
 	//m_variables.Print();
 	
 	// FIXME add to other Tools

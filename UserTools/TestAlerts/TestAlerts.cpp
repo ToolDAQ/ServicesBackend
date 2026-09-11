@@ -7,6 +7,7 @@ bool TestAlerts::Initialise(std::string configfile, DataModel &data){
 	m_configfile=configfile;
 	InitialiseTool(data);
 	InitialiseConfiguration(m_configfile);
+	logger=m_data->logger;
 	LoadConfig();
 	ExportConfiguration();
 	
@@ -29,7 +30,6 @@ bool TestAlerts::Execute(){
 
 
 bool TestAlerts::Finalise(){
-	
 	out_file.close();
 	return true;
 }
@@ -43,14 +43,14 @@ bool TestAlerts::LoadConfig(){
 	if(!m_variables.Get("out_file",out_fname));
 	out_file.open(out_fname);
 	if(!out_file.is_open()){
-		Log("Error opening output file '"+out_fname+"'",v_error,m_verbose);
+		LOG(logger,LOG_ERR,"Error opening output file '%s'",out_fname);
 		return false;
 	}
 	
 	std::string next_alert;
 	if(!m_variables.Get("alert_names",next_alert)){
-		Log("Error: No alert_names given!",v_error,m_verbose);
-		return false;
+		LOG(logger,LOG_WARNING,"Warning: No alert_names given. All alerts will be noted");
+		//return false; - default, log all alerts
 	}
 	std::stringstream alert_names;
 	alert_names.str(next_alert);
@@ -83,10 +83,10 @@ bool TestAlerts::AlertReceive(const char* alert_name, const char* alert_payload)
 	boost::posix_time::ptime now = boost::posix_time::microsec_clock::universal_time();
 	out_file << now << " " << alert_name << " " << alert_payload << std::endl;
 	if(m_verbose>3){
-		std::cout << "TestAlerts received '" << alert_name << "' at "
-		          << boost::posix_time::to_simple_string(now);
-		if(alert_payload) std::cout << ", with payload '" << alert_payload << "'";
-		std::cout << std::endl;
+		LOG(logger,LOG_NOTICE,"TestAlerts received '%s' alert at %s %s %s",
+		    alert_name,boost::posix_time::to_simple_string(now),
+		    (alert_payload ? "with payload " : "with no payload"),
+		    (alert_payload ? alert_payload : ""));
 	}
 	
 	// the middleman would not normally handle all this, but in lieu of a broker, we do it here

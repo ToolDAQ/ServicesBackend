@@ -16,3 +16,4 @@
 #include "TestAlerts.h"
 #include "StopQuitFile.h"
 #include "GracefulStop.h"
+#include "SetVerbosity.h"

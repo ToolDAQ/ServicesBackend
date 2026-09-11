@@ -49,6 +49,7 @@ class WriteQueryReceiver: public Tool {
 	bool Finalise(); ///< Finalise funciton used to clean up resorces
 	
 	private:
+	MLogger* logger;
 	static void Thread(Thread_args* args);
 	WriteQueryReceiver_args thread_args;
 	WriteReceiveMonitoring monitoring_vars;

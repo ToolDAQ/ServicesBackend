@@ -8,6 +8,7 @@ bool Monitoring::Initialise(std::string configfile, DataModel &data){
 	InitialiseTool(data);
 	m_configfile = configfile;
 	InitialiseConfiguration(configfile);
+	logger = m_data->logger;
 	//m_variables.Print();
 	
 	if(!m_variables.Get("verbose",m_verbose)) m_verbose=1;
@@ -38,7 +39,7 @@ bool Monitoring::Initialise(std::string configfile, DataModel &data){
 	thread_mtx.lock();
 	thread_args.thread_mtx = &thread_mtx;
 	if(!m_data->utils.CreateThread("monitoring", &Thread, &thread_args)){
-		Log("Failed to spawn background thread",v_error,m_verbose);
+		LOG(logger,LOG_ERR,"%s Failed to spawn background thread",m_tool_name.c_str());
 		return false;
 	}
 	m_data->num_threads++;
@@ -52,7 +53,7 @@ bool Monitoring::Initialise(std::string configfile, DataModel &data){
 bool Monitoring::Execute(){
 	
 	if(!thread_args.running){
-		Log("Execute found thread not running!",v_error);
+		LOG(logger,LOG_ERR,"%s Execute found thread not running!",m_tool_name.c_str());
 		Finalise();
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		// FIXME if restarts > X times in last Y mins, alarm (bypass, shove into DB? send to websocket?) and StopLoop.
@@ -66,11 +67,11 @@ bool Monitoring::Execute(){
 bool Monitoring::Finalise(){
 	
 	// signal job distributor thread to stop
-	Log("Joining monitoring thread",v_warning);
+	LOG(logger,LOG_NOTICE,"%s Joining background thread",m_tool_name.c_str());
 	thread_args.running=false;
 	thread_mtx.unlock();
 	m_data->utils.KillThread(&thread_args);
-	Log("thread joined",v_warning);
+	LOG(logger,LOG_NOTICE,"%s thread joined",m_tool_name.c_str());
 	m_data->num_threads--;
 	
 	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
@@ -80,7 +81,7 @@ bool Monitoring::Finalise(){
 	m_data->sc_vars.Stop();
 	m_data->num_threads--;
 	
-	Log("Finished",v_warning);
+	LOG(logger,LOG_NOTICE,"%s Finished",m_tool_name.c_str());
 	return true;
 }
 

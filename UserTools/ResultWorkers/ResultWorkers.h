@@ -51,6 +51,7 @@ class ResultWorkers: public Tool {
 	bool Finalise(); ///< Finalise funciton used to clean up resources.
 	
 	private:
+	MLogger* logger;
 	static void Thread(Thread_args* args);
 	ResultJobDistributor_args thread_args; ///< args for the child thread that makes jobs for the job queue
 	ResultWorkerMonitoring monitoring_vars;

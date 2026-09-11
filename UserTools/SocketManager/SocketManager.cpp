@@ -8,6 +8,7 @@ bool SocketManager::Initialise(std::string configfile, DataModel &data){
 	InitialiseTool(data);
 	m_configfile = configfile;
 	InitialiseConfiguration(configfile);
+	logger = m_data->logger;
 	//m_variables.Print();
 	
 	m_verbose=1;
@@ -34,7 +35,7 @@ bool SocketManager::Initialise(std::string configfile, DataModel &data){
 	thread_args.thread_mtx = &thread_mtx;
 	
 	if(!m_data->utils.CreateThread("socket_manager", &Thread, &thread_args)){
-		Log("Failed to spawn background thread",v_error,m_verbose);
+		LOG(logger,LOG_ERR,"Failed to spawn %s background thread",m_tool_name.c_str());
 		return false;
 	}
 	m_data->num_threads++;
@@ -44,6 +45,8 @@ bool SocketManager::Initialise(std::string configfile, DataModel &data){
 	                    std::bind(&SocketManager::ClearClients, this, std::placeholders::_1), nullptr);
 	m_data->sc_vars.Add("DisconnectAllClients", SlowControlElementType::BUTTON,
 	                    std::bind(&SocketManager::DisconnectAllClients, this, std::placeholders::_1), nullptr);
+	m_data->sc_vars.Add("DisconnectClient", SlowControlElementType::COMMAND,
+	                    std::bind(&SocketManager::DisconnectClient, this, std::placeholders::_1), nullptr);
 	
 	return true;
 }
@@ -52,7 +55,7 @@ bool SocketManager::Initialise(std::string configfile, DataModel &data){
 bool SocketManager::Execute(){
 	
 	if(!thread_args.running){
-		Log("Execute found thread not running!",v_error);
+		LOG(logger,LOG_ERR,"%s Execute found thread not running!",m_tool_name.c_str());
 		Finalise();
 		Initialise(m_configfile, *m_data); // FIXME should we give up if Initialise returns false? should we set StopLoop to 1?
 		++(monitoring_vars.thread_crashes);
@@ -83,9 +86,10 @@ bool SocketManager::Execute(){
 				std::string client_ip = aservice.second->Get<std::string>("ip");
 				std::string client_port = aservice.second->Get<std::string>(sock->remote_port_name);
 				std::string client_uuid = aservice.second->Get<std::string>("uuid");
-				//printf("%s connection to client application '%s' with uuid '%s' at ip '%s' on port '%s'\n",
-				//       sock->remote_port_name.c_str(), client_name.c_str(), client_uuid.c_str(),
-				//       client_ip.c_str(), client_port.c_str());
+				
+				LOG(logger,LOG_INFO, "%s connection to client application '%s' with uuid '%s' at ip '%s' on port '%s'",
+				    sock->remote_port_name.c_str(), client_name.c_str(), client_uuid.c_str(),
+				    client_ip.c_str(), client_port.c_str());
 				
 				// we want to group by application
 				// a given application will have a single client_name, IP and UUID, so bundle these
@@ -95,10 +99,12 @@ bool SocketManager::Execute(){
 				std::string client_conn = sock->remote_port_name+" ("+client_port+")";
 				if(!first) it = clientsmap.find(client_key);
 				if(first || it==clientsmap.end()){
-					//printf("mm adding new %s client: '%s' with connection '%s'\n",sock->remote_port_name.c_str(),client_key.c_str(), client_conn.c_str());
+					LOG(logger,LOG_NOTICE,"adding new %s client: '%s' with connection '%s'",
+					    sock->remote_port_name.c_str(),client_key.c_str(), client_conn.c_str());
 					clientsmap.emplace(client_key, client_conn);
 				} else {
-					//printf("mm updating %s client '%s', adding connection '%s'\n",sock->remote_port_name.c_str(),client_key.c_str(),client_conn.c_str());
+					LOG(logger,LOG_NOTICE,"updating %s client '%s', adding connection '%s'",
+					    sock->remote_port_name.c_str(),client_key.c_str(),client_conn.c_str());
 					it->second += "; "+client_conn; // FIXME , gets replaced by . on web, for now...
 				}
 			}
@@ -126,7 +132,7 @@ bool SocketManager::Execute(){
 bool SocketManager::Finalise(){
 	
 	// signal job distributor thread to stop
-	Log("Joining socket manager thread",v_warning);
+	LOG(logger,LOG_NOTICE,"%s Joining background thread",m_tool_name.c_str());
 	thread_args.running=false;
 	thread_mtx.unlock();
 	m_data->utils.KillThread(&thread_args);
@@ -135,7 +141,7 @@ bool SocketManager::Finalise(){
 	std::unique_lock<std::mutex> locker(m_data->monitoring_variables_mtx);
 	m_data->monitoring_variables.erase(m_tool_name);
 	
-	Log("Finished",v_warning);
+	LOG(logger,LOG_NOTICE,"%s Finished",m_tool_name.c_str());
 	return true;
 }
 
@@ -163,8 +169,7 @@ void SocketManager::Thread(Thread_args* args){
 		locker.unlock();
 		
 		if(new_conn_count!=0){
-			//m_args->m_data->services->SendLog(std::to_string(std::abs(new_conn_count))+" new connections to "+sock->service_name, v_message); // FIXME logging
-			//printf("mm %d new %s connections made!\n",new_conn_count, sock->remote_port_name.c_str());
+			LOG(m_args->m_data->logger,LOG_NOTICE, "%d new %s connections made!",new_conn_count, sock->remote_port_name.c_str());
 			*m_args->new_clients = true;
 		}
 		
@@ -193,7 +198,7 @@ std::string SocketManager::ClearClients(const char*){
 
 std::string SocketManager::DisconnectAllClients(const char*){
 	
-	printf("SocketManager kicking all clients!\n");
+	LOG(logger,LOG_WARNING,"SocketManager kicking all clients!");
 	
 	std::shared_lock<std::shared_mutex> container_locker(m_data->managed_sockets_mtx);
 	for(std::pair<const std::string&, ManagedSocket*> mgd_sock : m_data->managed_sockets){
@@ -215,7 +220,47 @@ std::string SocketManager::DisconnectAllClients(const char*){
 			std::string connection_string="tcp://"+client_ip + ":" + client_port;
 			sock->socket->disconnect(connection_string.c_str());
 			
-			printf("Disconnected %s %s port\n",aservice.second->Get<std::string>("msg_value").c_str(), sock->remote_port_name.c_str());
+			LOG(logger,LOG_NOTICE,"Disconnected %s %s port",aservice.second->Get<std::string>("msg_value").c_str(), sock->remote_port_name.c_str());
+			
+		}
+		sock->connections.clear();
+		
+	}
+	container_locker.unlock();
+	new_clients = true;
+	
+	return "All clients disconnected";
+}
+
+std::string SocketManager::DisconnectClient(const char* client){
+	
+	LOG(logger,LOG_WARNING,"SocketManager kicking client %s!", client);
+	
+	std::shared_lock<std::shared_mutex> container_locker(m_data->managed_sockets_mtx);
+	for(std::pair<const std::string&, ManagedSocket*> mgd_sock : m_data->managed_sockets){
+		
+		ManagedSocket* sock = mgd_sock.second;
+		std::unique_lock<std::mutex> socket_locker(sock->socket_mtx, std::defer_lock);
+		if(!socket_locker.try_lock()){
+			sock->socket_manager_request=true;
+			socket_locker.lock();
+			sock->socket_manager_request=false;
+		}
+		std::unique_lock<std::mutex> connections_locker(sock->connections_mtx);
+		
+		for(std::pair<const std::string, Store*>& aservice : sock->connections){
+			
+			if(strcmp(aservice.second->Get<std::string>("msg_value").c_str(),client)!=0){
+				continue;
+			}
+			
+			std::string client_ip = aservice.second->Get<std::string>("ip");
+			std::string client_port = aservice.second->Get<std::string>(sock->remote_port_name);
+			
+			std::string connection_string="tcp://"+client_ip + ":" + client_port;
+			sock->socket->disconnect(connection_string.c_str());
+			
+			LOG(logger,LOG_WARNING,"Disconnected %s %s port",aservice.second->Get<std::string>("msg_value").c_str(), sock->remote_port_name.c_str());
 			
 		}
 		sock->connections.clear();

@@ -40,6 +40,7 @@ class Monitoring: public Tool {
 	bool Finalise(); ///< Finalise function used to clean up resources.
 	
 	private:
+	MLogger* logger;
 	static void Thread(Thread_args* args);
 	Monitoring_args thread_args;
 	MonitoringMonitoring monitoring_vars;

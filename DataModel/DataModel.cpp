@@ -1,6 +1,9 @@
 #include "DataModel.h"
 
-DataModel::DataModel():DAQDataModelBase(){}
+DataModel::DataModel():DAQDataModelBase(){
+	m_logger.SetServices(services);
+	logger = &m_logger;
+}
 
 /*
 TTree* DataModel::GetTTree(std::string name){

@@ -36,6 +36,7 @@ class JobManager: public Tool {
 	
 	std::string m_configfile;
 	void LoadConfig();
+	MLogger* logger;
 	
 };
 
